@@ -502,7 +502,7 @@ export function install(rt) {
   // A value that is part of its own label would be replaced again on every pass, so a
   // request this listener rewrote passes straight through.
   const rewritten = new WeakSet()
-  ctx.on('llm/stream', (options, next) => {
+  ctx.on('llm/stream', function redactBotRequest(options, next) {
     if (secrets.size === 0 || rewritten.has(options.messages)) return next()
     const messages = redactDeep(options.messages, redact)
     const system = redactDeep(options.system, redact)

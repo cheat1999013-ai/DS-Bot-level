@@ -152,7 +152,7 @@ export function CapabilitiesPage({ roster, actions, run }) {
 }
 
 export function BotCapabilitiesCard({ bot, roster, actions, run, Card, SwitchRow }) {
-  const items = [...(roster.capabilities ?? [])].sort((a, b) => Number(b.kind === 'pack') - Number(a.kind === 'pack') || a.name.localeCompare(b.name))
+  const items = (roster.capabilities ?? []).filter(item => item.kind !== 'mcp').sort((a, b) => Number(b.kind === 'pack') - Number(a.kind === 'pack') || a.name.localeCompare(b.name))
   const attached = new Set(bot.capabilities ?? [])
   const statuses = roster.capabilityStatuses?.[bot.id] ?? {}
   if (items.length === 0) return null

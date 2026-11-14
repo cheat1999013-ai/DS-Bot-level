@@ -19,7 +19,7 @@ const DOCK_EXIT_MS = 160
 export function memberWork(room, work = NO_WORK) {
   const here = work.rooms?.[room.id] ?? []
   return room.members.map((id) => {
-    const approvals = (work.approvals ?? []).filter(entry => entry.botId === id)
+    const approvals = (work.approvals ?? []).filter(entry => entry.botId === id && entry.roomId === room.id)
     const local = here.find(entry => entry.botId === id)
     const doing = local ? { ...local, roomId: room.id } : undefined
     return { id, approvals, doing, here: local !== undefined, state: approvals.length > 0 ? 'ask' : doing ? 'work' : 'idle' }
@@ -68,7 +68,8 @@ function dockModel(sessionId, roster, work) {
     if (busy.length === 0) return null
     const { waiting, doing } = summaryText(busy)
     return {
-      open: { details: room.id },
+      open: (work.approvals ?? []).some(entry => entry.roomId === room.id && room.members.includes(entry.botId))
+        ? { session: room.id } : { details: room.id },
       faces: busy.slice(0, FACES_MAX).map(entry => ({ id: entry.id, ask: entry.state === 'ask', state: workState(entry.doing) })),
       waiting, doing,
     }
@@ -129,27 +130,47 @@ const stateLine = (className, at, ...what) => h('span', { className },
   h('span', { className: 'bt-member-what' }, ...what),
   typeof at === 'number' ? h(Elapsed, { at, className: 'bt-member-time' }) : null)
 
-function ApprovalCard({ approval, bot, actions }) {
+function ApprovalCard({ approval, bot, actions, showBot = false }) {
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const submitting = useRef(false)
   const answer = (choice) => {
+    if (submitting.current || !approval.answerable) return
+    submitting.current = true
     setBusy(true)
-    void Promise.resolve(actions.answerApproval(approval.id, choice))
-      .catch(error => actions.reportError(error, 'approval'))
-      .finally(() => setBusy(false))
+    setError('')
+    void Promise.resolve().then(() => actions.answerApproval(approval.id, choice))
+      .catch(failure => { setError(failure?.message ?? String(failure)); actions.reportError(failure, 'approval') })
+      .finally(() => { submitting.current = false; setBusy(false) })
   }
-  return h('div', { className: 'bt-mw-card', role: 'group', 'aria-label': t('{name} is waiting for your approval', { name: bot.name }) },
+  return h('div', { className: 'bt-mw-card', 'data-approval-id': approval.id, role: 'group', 'aria-label': t('{name} is waiting for your approval', { name: bot.name }) },
+    showBot ? h('div', { className: 'bt-mw-requester' }, h(BotMark, { bot, size: 22 }), h('strong', null, bot.name), h('span', null, t('Waiting for your approval'))) : null,
     h('div', { className: 'bt-mw-tool' }, approval.tool),
     approval.detail?.text ? h('div', { className: 'bt-mw-text' }, approval.detail.text) : null,
     approval.reason ? h('div', { className: 'bt-mw-reason' }, approval.reason) : null,
     approval.detail?.code ? h('code', { className: 'bt-mw-code', title: approval.detail.code }, approval.detail.code) : null,
+    approval.detail?.parameters ? h('details', { className: 'bt-mw-parameters' },
+      h('summary', null, t('Operation details')), h('pre', { className: 'bt-mw-code' }, approval.detail.parameters)) : null,
     // Own-chat approvals are answerable for IM and the phone app; here the Bot's
     // own DSH card stays the place to answer, so the row still opens that chat.
-    approval.answerable && approval.roomId !== undefined
+    approval.roomId !== undefined
       ? h('div', { className: 'bt-mw-actions' },
-        h('button', { type: 'button', className: 'bt-q-btn', disabled: busy, onClick: () => answer('reject') }, t('Reject')),
-        h('button', { type: 'button', className: 'bt-q-submit', disabled: busy, onClick: () => answer('allow') }, t('Allow once')))
+        h('button', { type: 'button', className: 'bt-q-btn', disabled: busy || !approval.answerable, onClick: () => answer('reject') }, t('Reject')),
+        h('button', { type: 'button', className: 'bt-q-submit', title: t('Allow once'), disabled: busy || !approval.answerable, onClick: () => answer('allow') }, t('Approve once')))
       : h('div', { className: 'bt-mw-actions' },
-        h('button', { type: 'button', className: 'bt-q-btn', onClick: () => actions.openSession(bot.id) }, t("Open {name}'s chat", { name: bot.name }))))
+        h('button', { type: 'button', className: 'bt-q-btn', onClick: () => actions.openSession(bot.id) }, t("Open {name}'s chat", { name: bot.name }))),
+    error ? h('div', { role: 'alert', className: 'bt-error' }, error) : null)
+}
+
+export function GroupApprovalDock({ sessionId, useRoster, useWork, actions }) {
+  const roster = useRoster(value => value)
+  const work = useWork?.(value => value) ?? NO_WORK
+  const room = roster.roomsById[sessionId]
+  const approvals = room ? (work.approvals ?? []).filter(entry => entry.roomId === room.id
+    && room.members.includes(entry.botId) && roster.byId[entry.botId]) : []
+  if (!approvals.length) return null
+  return h('section', { className: 'bt-group-approvals', 'aria-label': t('Waiting for your approval'), 'aria-live': 'polite' },
+    approvals.map(approval => h(ApprovalCard, { key: approval.id, approval, bot: roster.byId[approval.botId], actions, showBot: true })))
 }
 
 // A member's second line in the group's details: what it is doing here, or its role.
@@ -188,10 +209,6 @@ export function StopRoomWork({ room, entries, actions }) {
   return h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: stopping, 'aria-label': label, title: label, onClick: stop }, t('Stop all'))
 }
 
-export function MemberApprovals({ entry, bot, actions }) {
-  if (entry?.state !== 'ask') return null
-  return h('div', { className: 'bt-member-cards' }, entry.approvals.map(approval => h(ApprovalCard, { key: approval.id, approval, bot, actions })))
-}
 
 export function useMemberWork(room, useWork) {
   const work = useWork?.(value => value) ?? NO_WORK
@@ -245,6 +262,12 @@ body[data-ds-dark-theme] .bt-member-state.bt-mw-ask{color:#f0b84a}
 .bt-member-stop:disabled{opacity:.5;cursor:default}
 .bt-member-cards{display:flex;flex-direction:column;gap:6px;padding:2px 8px 8px 50px}
 .bt-mw-card{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border-radius:12px;background:var(--bt-hover);font-size:12px;line-height:17px;color:var(--bt-ink-2);animation:bt-rise .2s ease-out backwards}
+.bt-group-approvals{display:grid;gap:8px;margin-bottom:10px;max-height:min(45vh,420px);overflow:auto;text-align:left;min-width:0}
+.bt-group-approvals .bt-mw-card{border:1px solid var(--bt-line-2);background:var(--bt-card);min-width:0}
+.bt-group-approvals .bt-mw-code{white-space:pre-wrap;overflow-wrap:anywhere;max-height:160px;overflow:auto}
+.bt-group-approvals .bt-mw-reason{display:block;white-space:pre-wrap;max-height:160px;overflow:auto}
+.bt-mw-requester{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--bt-ink)}
+.bt-mw-requester>span:last-child{font-size:11px;color:var(--bt-ink-2)}
 .bt-mw-tool{font-weight:600;color:var(--bt-ink)}
 .bt-mw-text{color:var(--bt-ink);overflow-wrap:anywhere}
 .bt-mw-reason{overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}

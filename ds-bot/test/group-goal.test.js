@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { setTimeout as realDelay } from 'node:timers/promises'
 import { createRuntime } from '../index.js'
 import { fakeContext } from './fake-ctx.js'
 import { ROOM_WORK_GRACE_MS } from '../src/host/constants.js'
@@ -117,7 +118,8 @@ async function start(t, room, services, extraRooms) {
 
 const settle = async (check) => {
   const until = Date.now() + 3000
-  while (!check() && Date.now() < until) await new Promise(resolve => setImmediate(resolve))
+  // Let Windows close synchronous state readers before the writer replaces the file.
+  while (!check() && Date.now() < until) await realDelay(5)
   assert.ok(check(), 'condition not reached')
 }
 const text = message => message.content.map(block => block.text ?? '').join('\n')

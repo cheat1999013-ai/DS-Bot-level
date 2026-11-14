@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { setTimeout as realDelay } from 'node:timers/promises'
 import { createRuntime } from '../index.js'
 import { fakeAttachments, fakeContext } from './fake-ctx.js'
 import { LONG_HEAD, MESSAGE_INLINE_MAX, ROOM_STEP_GAP_MS, ROOM_WORK_GRACE_MS } from '../src/host/constants.js'
 import { promisesWork } from '../src/host/turns.js'
+import { Scheduler } from '../src/host/taskflow/scheduler.js'
 
 let rt
 
@@ -117,11 +119,208 @@ async function start(t, room, services, extraRooms, bots, llm) {
 
 const settle = async (check) => {
   const until = Date.now() + 3000
-  while (!check() && Date.now() < until) await new Promise(resolve => setImmediate(resolve))
+  // Let Windows close synchronous state readers before the writer replaces the file.
+  while (!check() && Date.now() < until) await realDelay(5)
   assert.ok(check(), 'condition not reached')
 }
 const text = message => message.content.map(block => block.text ?? '').join('\n')
 const kinds = result => result.replies.map(reply => [reply.kind ?? 'message', reply.name])
+
+for (const recovered of ['unknown', 'pending']) test(`a recovered ${recovered} task actually wakes the principal and retains its original card`, async (t) => {
+  const host = await start(t)
+  // Establish the ordinary group Session, then create the persisted unfinished
+  // plan as a prior host would have left it. No model or live profile is used.
+  rt.groupOwners.set('ga', { botId: 'a', roomId: 'r1' })
+  const created = JSON.parse(await host.tool('taskflow_plan', { group: 'Ops', goal: 'Recover existing work',
+    children: [{ id: 'fix-ui', member: 'Writer', goal: 'Fix the existing UI', dependencies: [] },
+      { id: 're-visual', member: 'Tester', goal: 'Check the UI', dependencies: ['fix-ui'] }] }, 'ga'))
+  const ledger = new Scheduler(join(host.home, 'plugin-data', 'hermes-bot-taskflow', 'coordination.sqlite'), { recoverOnOpen: false })
+  try {
+    if (recovered === 'unknown') {
+      ledger.claimNext(created.plan.plan_id, { principal: 'a' })
+      ledger.bindReceipt(created.plan.plan_id, 'fix-ui', { receipt: 'dsh:existing-receipt' })
+      ledger.recoverDispatches()
+      ledger.write(() => ledger.event(created.plan.plan_id, 'fix-ui', 'recovery_attention', { attempts: 1, principal: 'a' }))
+    }
+  } finally { ledger.close() }
+  await rt.taskflowSweep()
+  await settle(() => host.agentOf('r1').calls.length > 0)
+  const post = host.takePost()
+  const round = host.round('recovery-followup', post)
+  await settle(() => host.agentOf('ga').calls.length === 1)
+  const called = host.begin('ga')
+  assert.match(text(called), /taskflow_results/)
+  assert.match(text(called), /fix-ui/)
+  assert.equal(host.agentOf('gb').calls.length, 0)
+  assert.equal(host.agentOf('gc').calls.length, 0)
+  const results = JSON.parse(await host.tool('taskflow_results', { planId: created.plan.plan_id }, 'ga'))
+  assert.equal(results.results[0].state, recovered)
+  assert.equal(results.results[1].attempts, 0)
+  host.emit('ga', 'tool/call', { name: 'taskflow_results', callId: 'recovery-read', arguments: '{}' })
+  host.emit('ga', 'tool/result', { callId: 'recovery-read' })
+  if (recovered === 'pending') {
+    const dispatched = JSON.parse(await host.tool('taskflow_dispatch', { planId: created.plan.plan_id }, 'ga'))
+    assert.equal(dispatched.sent[0].id, 'fix-ui', 'the recovered principal continues the original plan')
+    await settle(() => host.agentOf('gb').calls.length === 1)
+    host.begin('gb')
+    await host.tool('taskflow_cancel', { planId: created.plan.plan_id, reason: 'End isolated fixture after verifying recovery dispatch' }, 'ga')
+    host.emit('gb', 'turn/end', { reason: { kind: 'aborted', reason: { kind: 'user' } } })
+  }
+  host.finish('ga', '核验后确认：任务尚未提交，保留阻塞并等待明确处置。')
+  await settle(() => round() !== undefined)
+  await rt.taskflowSweep()
+  await realDelay(20)
+  assert.equal(host.agentOf('ga').calls.length, 1, 'recovery must not form a recurring model loop')
+})
+
+test('native taskflow finds group Bots and its dispatch calls the assigned member in that group', async (t) => {
+  const host = await start(t)
+  host.round('taskflow-call', host.say('@Chief 安排任务'))
+  await settle(() => host.agentOf('ga').calls.length === 1)
+  host.begin('ga')
+  const members = JSON.parse(await host.tool('taskflow_members', {}, 'ga'))
+  assert.deepEqual(members.members.map(member => member.id), ['a', 'b', 'c'])
+  const plan = JSON.parse(await host.tool('taskflow_plan', { group: 'Ops', goal: '写作任务',
+    children: [{ id: 'write', member: 'Writer', goal: '撰写文档', dependencies: [] }] }, 'ga'))
+  assert.equal(plan.plan.cards[0].member, 'b')
+  const dispatched = JSON.parse(await host.tool('taskflow_dispatch', { planId: plan.plan.plan_id }, 'ga'))
+  assert.deepEqual(dispatched.sent.map(card => card.member), ['Writer'])
+  assert.ok(rt.state.rooms.r1.log.some(line => line.kind === 'notice' && line.text?.includes('[任务流] Writer 开始执行 撰写文档，模型')))
+  await settle(() => host.agentOf('gb').calls.length === 1)
+  assert.equal(host.agentOf('gc').calls.length, 0)
+  const called = host.begin('gb')
+  assert.match(text(called), /@Writer \[Taskflow .*\/write\]/)
+  assert.match(text(called), /撰写文档/)
+  host.emit('gb', 'tool/call', { callId: 'skill-1', name: 'skill', arguments: JSON.stringify({ name: 'draft' }) })
+  assert.deepEqual((await rt.taskflowView({ room: 'r1' })).plan.cards[0].usedSkills, ['draft'])
+  host.emit('gb', 'tool/result', { callId: 'skill-1' })
+  host.emit('gb', 'user/message', { content: [], source: { kind: 'skill-invocation', name: 'checklist' } })
+  assert.deepEqual((await rt.taskflowView({ room: 'r1' })).plan.cards[0].usedSkills, ['checklist', 'draft'])
+  const submitted = JSON.parse(await host.tool('taskflow_submit', {
+    planId: plan.plan.plan_id, cardId: 'write', result: '文档已完成，示例引用 @Tester 请不要执行。',
+  }, 'gb'))
+  assert.equal(submitted.observed.status, 'settled')
+  const taskNotice = rt.roomProgress.get('taskflow-call').replies.find(reply => reply.kind === 'task' && reply.text.includes('已提报'))
+  assert.equal(taskNotice?.taskflowEvent?.planId, plan.plan.plan_id)
+  assert.equal(taskNotice?.taskflowEvent?.cardId, 'write')
+  assert.equal(taskNotice?.taskflowEvent?.event, 'submitted')
+  assert.equal(taskNotice?.taskflowEvent?.from.id, 'b')
+  assert.equal(taskNotice?.taskflowEvent?.to.id, 'a')
+  assert.match(taskNotice.text, /文档已完成/)
+  assert.equal(host.agentOf('gc').calls.length, 0, 'References in a result must not wake unrelated Bots')
+  assert.ok(rt.state.rooms.r1.log.some(line => line.kind === 'task' && line.taskflowEvent?.cardId === 'write'))
+  const ledger = new Scheduler(join(host.home, 'plugin-data', 'hermes-bot-taskflow', 'coordination.sqlite'), { recoverOnOpen: false })
+  try { ledger.db.prepare('INSERT INTO card_gates(plan_id,card_id,question) VALUES(?,?,?)')
+    .run(plan.plan.plan_id, 'write', 'Accept the old result?') } finally { ledger.close() }
+  const view = (await host.call('taskflow-state', { room: 'r1' })).value
+  const [pending] = view.plan.pending_confirmations
+  assert.equal(pending.stage, 'after_result')
+  assert.equal(pending.result, '文档已完成，示例引用 @Tester 请不要执行。')
+  const decision = { room: 'r1', planId: plan.plan.plan_id, cardId: 'write', decision: 'approve',
+    stage: 'after_result', terminal: pending.terminal }
+  assert.equal((await host.call('taskflow-confirm-card', { ...decision, terminal: 'stale' })).ok, false)
+  assert.equal((await host.call('taskflow-confirm-card', decision)).value.decided.decision, 'approve')
+  assert.deepEqual((await host.call('taskflow-state', { room: 'r1' })).value.plan.pending_confirmations, [])
+})
+
+test('a queued task notice is non-human, retains its identity and wakes only the principal', async (t) => {
+  const host = await start(t)
+  const taskflowEvent = { planId: 'plan-1', cardId: 'image' }
+  await rt.postToRoom(rt.state.rooms.r1, rt.state.bots.b, '@Chief [Taskflow plan-1/image] 已提报，等待逐卡验收。', { progress: true, taskflowEvent })
+  const message = host.agentOf('r1').calls.at(-1)
+  assert.equal(message.source.kind, 'bot')
+  assert.deepEqual(message.source.taskflowEvent, taskflowEvent)
+  const result = host.round('task-notice', { content: message.content, source: message.source })
+  await settle(() => host.agentOf('ga').calls.length === 1)
+  assert.equal(host.agentOf('gb').calls.length, 0)
+  assert.equal(host.agentOf('gc').calls.length, 0)
+  assert.ok(rt.state.rooms.r1.log.some(line => line.kind === 'task' && line.taskflowEvent?.cardId === 'image'))
+  host.begin('ga')
+  host.finish('ga', '[PASS]')
+  await settle(() => result() !== undefined)
+})
+
+test('old taskflow ledger is backed up to the profile coordination database without removing its source', async (t) => {
+  const host = await start(t)
+  const source = join(host.home, 'taskflow.sqlite')
+  const legacy = new Scheduler(source, { recoverOnOpen: false })
+  legacy.createPlan({ planId: 'legacy-one', room: 'r1', principal: 'a',
+    cards: [{ id: 'write', member: 'b', goal: '写报告', dependencies: [] }] })
+  legacy.close()
+  const target = join(host.home, 'plugin-data', 'hermes-bot-taskflow', 'coordination.sqlite')
+  assert.equal(existsSync(target), false)
+  const view = await rt.taskflowView({ room: 'r1' })
+  assert.equal(view.plan.plan_id, 'legacy-one')
+  assert.equal(existsSync(source), true)
+  assert.equal(existsSync(target), true)
+})
+
+test('a standalone owner appointment routes subsequent unmentioned work only to the appointed Bot', async (t) => {
+  const host = await start(t, { mode: 'everyone' })
+  const appointment = host.round('appoint', host.say('@Writer 你是运营主管'))
+  await settle(() => appointment() !== undefined)
+  assert.equal(rt.state.rooms.r1.admin, 'b')
+  assert.equal(rt.state.rooms.r1.taskflowLeader, true)
+  assert.equal(host.agentOf('ga').calls.length, 0)
+  assert.equal(host.agentOf('gb').calls.length, 0)
+
+  host.round('work', host.say('请安排本周的工作'))
+  await settle(() => host.agentOf('gb').calls.length === 1)
+  assert.equal(host.agentOf('ga').calls.length, 0)
+  assert.equal(host.agentOf('gc').calls.length, 0)
+})
+
+test('appointment with a question or a task does not change the group leader', async (t) => {
+  const host = await start(t)
+  host.round('question', host.say('@Writer 你是运营主管吗？'))
+  await settle(() => host.agentOf('gb').calls.length === 1)
+  assert.equal(rt.state.rooms.r1.admin, 'a')
+  assert.equal(rt.state.rooms.r1.taskflowLeader, undefined)
+  host.round('mixed', host.say('@Writer 你是运营主管，帮我写篇文章'))
+  await settle(() => host.agentOf('gb').calls.length === 2)
+  assert.equal(rt.state.rooms.r1.admin, 'a')
+})
+
+test('appointment transfers open plans so the new leader can accept submitted work', async (t) => {
+  const host = await start(t)
+  const created = JSON.parse(await host.tool('taskflow_plan', { group: 'Ops', goal: '检查',
+    children: [{ id: 'check', member: 'Tester', goal: '核对结果', dependencies: [] }] }, 'ga'))
+  const id = created.plan.plan_id
+  const appointed = host.round('appoint-open-plan', host.say('@Writer 你是运营主管'))
+  await settle(() => appointed() !== undefined)
+  assert.equal(rt.state.rooms.r1.admin, 'b')
+  const state = JSON.parse(await host.tool('taskflow_status', { planId: id }, 'gb'))
+  assert.equal(state.plan.principal, 'b')
+  assert.equal(JSON.parse(await host.tool('taskflow_dispatch', { planId: id }, 'ga')).error, 'leader_only')
+  const dispatched = JSON.parse(await host.tool('taskflow_dispatch', { planId: id }, 'gb'))
+  assert.equal(dispatched.sent[0].member, 'Tester')
+})
+
+test('a taskflow executor cannot wake peers through its interim or final group speech', async (t) => {
+  const host = await start(t)
+  const created = JSON.parse(await host.tool('taskflow_plan', { group: 'Ops', goal: '写文档',
+    children: [{ id: 'write', member: 'Writer', goal: '撰写内容', dependencies: [] }] }, 'ga'))
+  await host.tool('taskflow_dispatch', { planId: created.plan.plan_id }, 'ga')
+  const delivered = host.round('taskflow-work', host.takePost())
+  await settle(() => host.agentOf('gb').calls.length === 1)
+  host.begin('gb')
+  await rt.roomStepText('gb', { role: 'room' }, '正在写文档', false)
+  const ledger = new Scheduler(join(host.home, 'plugin-data', 'hermes-bot-taskflow', 'coordination.sqlite'), { readOnly: true })
+  try {
+    await settle(() => Boolean(ledger.db.prepare('SELECT 1 FROM card_progress WHERE plan_id=? AND card_id=?')
+      .get(created.plan.plan_id, 'write')))
+  } finally { ledger.close() }
+  await host.tool('taskflow_submit', { planId: created.plan.plan_id, cardId: 'write', result: '文档已写入。' }, 'gb')
+  await settle(() => host.agentOf('ga').calls.length > 0)
+  host.begin('ga')
+  await host.tool('taskflow_accept', { planId: created.plan.plan_id, cardId: 'write' }, 'ga')
+  await host.tool('taskflow_finish', { planId: created.plan.plan_id }, 'ga')
+  host.finish('ga', '[PASS]')
+  host.finish('gb', '@Tester 我在写文档，帮忙看看')
+  await settle(() => host.agentOf('gc').calls.length > 0 || delivered() !== undefined)
+  assert.equal(host.agentOf('gc').calls.length, 0)
+  assert.equal(rt.state.rooms.r1.log.some(line => line.botId === 'b' && line.text?.includes('帮忙看看')), false)
+})
 
 test('work past the grace lets the round go on, and the member that asked answers the result', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
@@ -1516,6 +1715,71 @@ test('parallel batch barrier posts each late reply at once and wakes the caller 
 
 // #469: a member that replies only "收到，我现在开始排查" without calling any tool gets
 // one automatic continuation turn on the same exchange so the work actually runs.
+for (const endReason of ['completed', 'max-tokens']) test(`a formal task ending ${endReason} after tools continues until submission`, async (t) => {
+  const host = await start(t)
+  host.round('unfinished-task', host.say('@Chief 安排任务'))
+  await settle(() => host.agentOf('ga').calls.length === 1)
+  host.begin('ga')
+  const planned = JSON.parse(await host.tool('taskflow_plan', { group: 'Ops', goal: 'Finish work',
+    children: [{ id: 'write', member: 'Writer', goal: 'Write and submit', dependencies: [] }] }, 'ga'))
+  await host.tool('taskflow_dispatch', { planId: planned.plan.plan_id }, 'ga')
+  await settle(() => host.agentOf('gb').calls.length === 1)
+  const initial = host.begin('gb')
+  host.emit('gb', 'tool/call', { callId: 'read-1', name: 'read_file', arguments: '{}' })
+  host.emit('gb', 'tool/result', { callId: 'read-1' })
+  host.emit('gb', 'assistant/message', { message: { content: [{ type: 'text', text: '已读资料，接下来继续。' }] } })
+  host.emit('gb', 'turn/end', { reason: { kind: endReason } })
+  await settle(() => host.agentOf('gb').calls.length === 2)
+  const continued = host.begin('gb')
+  assert.equal(continued.source.exchangeId, initial.source.exchangeId)
+  assert.match(text(continued), /taskflow_submit/)
+  await host.tool('taskflow_submit', { planId: planned.plan.plan_id, cardId: 'write', result: 'Actual fixture result' }, 'gb')
+  host.finish('gb', '已提交真实结果。')
+  await realDelay(20)
+  assert.equal(host.agentOf('gb').calls.length, 2, 'submitted work must not restart')
+})
+
+test('a formal worker has two continuation deliveries and only one exhaustion notice', async (t) => {
+  const host = await start(t)
+  host.round('budget-task', host.say('@Chief 安排任务'))
+  await settle(() => host.agentOf('ga').calls.length === 1)
+  host.begin('ga')
+  const planned = JSON.parse(await host.tool('taskflow_plan', { group: 'Ops', goal: 'Work',
+    children: [{ id: 'write', member: 'Writer', goal: 'Work', dependencies: [] }] }, 'ga'))
+  await host.tool('taskflow_dispatch', { planId: planned.plan.plan_id }, 'ga')
+  await settle(() => host.agentOf('gb').calls.length === 1)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    host.begin('gb')
+    host.finish('gb', '还有未完成部分。')
+    if (attempt < 2) await settle(() => host.agentOf('gb').calls.length === attempt + 2)
+  }
+  await settle(() => rt.state.rooms.r1.log.some(line => line.kind === 'notice' && line.text.includes('自动续执行已停止')))
+  assert.equal(host.agentOf('gb').calls.length, 3)
+  const later = []
+  rt.lateRoomReply = async (_id, _info, reply) => later.push(reply)
+  host.agentOf('gb').followup({content:[{type:'text',text:'普通追问'}],source:{kind:'bot',role:'room',roomId:'r1',exchangeId:'unrelated-query',askedBy:'a'}})
+  host.begin('gb')
+  host.finish('gb', '这是普通追问的回答。')
+  await settle(() => later.length > 0)
+  assert.equal(later.at(-1), '这是普通追问的回答。')
+  assert.equal(rt.state.rooms.r1.log.filter(line => line.kind === 'notice' && line.text.includes('自动续执行已停止')).length, 1)
+})
+
+test('a stopped formal worker is never automatically continued', async (t) => {
+  const host = await start(t)
+  host.round('stopped-task', host.say('@Chief 安排任务'))
+  await settle(() => host.agentOf('ga').calls.length === 1)
+  host.begin('ga')
+  const planned = JSON.parse(await host.tool('taskflow_plan', { group: 'Ops', goal: 'Work',
+    children: [{ id: 'write', member: 'Writer', goal: 'Work', dependencies: [] }] }, 'ga'))
+  await host.tool('taskflow_dispatch', { planId: planned.plan.plan_id }, 'ga')
+  await settle(() => host.agentOf('gb').calls.length === 1)
+  host.begin('gb')
+  host.emit('gb', 'turn/end', { reason: { kind: 'aborted', reason: { kind: 'user' } } })
+  await realDelay(20)
+  assert.equal(host.agentOf('gb').calls.length, 1)
+})
+
 test('a member that only promises to start working without calling a tool gets one continuation turn (#469)', async (t) => {
   const host = await start(t)
   const first = host.round('c1', host.say('@Writer 排查一下构建失败的原因'))

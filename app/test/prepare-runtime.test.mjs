@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { after, before, describe, test } from 'node:test'
 import { parsePrimaryRuntime, workspaceDependencyPaths } from '@deepseek-ai/dsh-tool-workspace-dependencies'
-import { primaryRuntimeManifest, runtimeReusable, runtimeTarget } from '../scripts/prepare-runtime.mjs'
+import { preparePrimaryRuntime, primaryRuntimeManifest, runtimeReusable, runtimeTarget } from '../scripts/prepare-runtime.mjs'
+
+const testRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '.tmp-test')
+mkdirSync(testRoot, { recursive: true })
 
 describe('runtimeTarget', () => {
   test('maps the platforms electron-builder packs for to the lock\'s targets', () => {
@@ -49,7 +52,7 @@ describe('runtimeReusable', () => {
   let output
   let root
   before(() => {
-    output = mkdtempSync(join(tmpdir(), 'ds-bot-runtime-'))
+    output = mkdtempSync(join(testRoot, 'ds-bot-runtime-'))
     root = join(output, 'primary-runtime')
   })
   after(() => { rmSync(output, { recursive: true, force: true }) })
@@ -67,4 +70,27 @@ describe('runtimeReusable', () => {
     writeFileSync(join(root, 'runtime.json'), JSON.stringify({ ...manifest, payloadDigest: '0'.repeat(64) }))
     assert.equal(runtimeReusable(output, manifest), false)
   })
+})
+
+test('a reused runtime records the new app version without rebuilding its payload', async () => {
+  const target = runtimeTarget(process.platform, process.arch) ?? 'win-x64'
+  const output = mkdtempSync(join(testRoot, 'ds-bot-version-'))
+  const root = join(output, 'primary-runtime')
+  const old = primaryRuntimeManifest(target, '0.3.3')
+  const entries = workspaceDependencyPaths(root, old)
+  try {
+    for (const path of [entries.python, entries.node]) {
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, 'original payload')
+    }
+    mkdirSync(entries.pythonPackages, { recursive: true })
+    writeFileSync(join(root, 'runtime.json'), JSON.stringify(old))
+    const skillSource = join(output, 'office-source')
+    mkdirSync(skillSource)
+    writeFileSync(join(skillSource, 'SKILL.md'), 'test skill')
+    await preparePrimaryRuntime({ target, output, cache: join(output, 'cache'), version: '0.3.4', skillSource })
+    assert.equal(JSON.parse(readFileSync(join(root, 'runtime.json'), 'utf8')).desktopVersion, '0.3.4')
+    assert.equal(readFileSync(entries.node, 'utf8'), 'original payload')
+    assert.equal(runtimeReusable(output, primaryRuntimeManifest(target, '0.3.4')), true)
+  } finally { rmSync(output, { recursive: true, force: true }) }
 })

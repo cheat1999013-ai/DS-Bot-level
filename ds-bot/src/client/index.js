@@ -1,3 +1,4 @@
+import { createElement as h } from 'react'
 import { call } from './api.js'
 import { isHex, inkText, paintCss } from './inks.js'
 import { DEFAULT_MASK, SHAPES, markupCache, maskOf } from './characters.js'
@@ -6,6 +7,7 @@ import { teamActions } from './team-actions.js'
 import { themeCss, shellTokens, registry, registerShape, registerTheme, allThemes, layoutOf, widthOf, flatWidthOf } from './themes.js'
 import { MENTION_ORIGIN, currentPart } from './text.js'
 import { SHELL_CSS, CONVERSATION_CSS, installStyles, installCompiledStyles } from './styles.js'
+import { DASHBOARD_CSS as TASKFLOW_CSS } from './taskflow-dashboard.js'
 import { lookOf } from './mark.js'
 import { TeamSidebar, YouAvatar, AccountLauncher, FooterAccount, BrandMark, BrandName, BotReturn, SIDEBAR_CSS, RETURN_CSS, holdShellShortcuts, openHarnessOnboarding, openHarnessSettings, MODELS_STEP, MODELS_STEP_ORDER, OpenModelsStep } from './sidebar.js'
 import { frameLayout, readSidebar, writeSidebar, toggledPref, DSH_NARROW } from './frame-layout.js'
@@ -22,7 +24,8 @@ import { AnsweredReply, WidgetDock, WIDGET_CSS } from './widget-cell.js'
 import { HandoffDock, HANDOFF_CSS } from './handoff-card.js'
 import { AppAccessDock, ComputerHandoffDock, ComputerIndicator, COMPUTER_CSS } from './computer.js'
 import { installHeaderNavigation } from './header-navigation.js'
-import { AssistantCell, TriggerCell, TurnProcessCell, Nothing, CellEmpty, TurnTailCell, ToolCell } from './cells.js'
+import { AssistantCell, TriggerCell, TurnProcessCell, Nothing, CellEmpty, TurnTailCell, ToolCell, GroupRelayToolView, GroupReplyCell } from './cells.js'
+import { GROUP_REPLY_KIND, installGroupReplyProjection, supportsGroupReplyProjection } from './group-reply-projection.js'
 import { FailureCell, TURN_ERROR_CSS } from './turn-error.js'
 import { Overlays } from './overlays.js'
 import { createBotBrowsers, serveBrowserReads } from './bot-browsers.js'
@@ -40,17 +43,19 @@ import { USAGE_CSS } from './usage-page.js'
 import { SCHEDULE_CSS } from './schedules.js'
 import { STORAGE, migrateStorage } from './storage.js'
 import { noteLeft, setUnread, sharedMap, toggleReaction } from './shared-map.js'
-import { freePriority, groupsFor, readMode, surfaceGroups, writeMode } from './surface.js'
+import { freePriority, groupsFor, installGroupToolView, readMode, surfaceGroups, writeMode } from './surface.js'
 import { installLocale, language, t } from './i18n.js'
 import { noteClientError, quietly } from './diagnostics.js'
 import { steerQueued } from './enter-steer.js'
 import { RIGHTBAR_ATTRIBUTES, columnOpened, createSwitchWindow, drawerOpened, rightColumnOpen } from './right-panel.js'
 import { ErrorToast, FEEDBACK_CSS } from './feedback.js'
 import { ABOUT_CSS } from './about.js'
-import { MEMBER_CSS, MemberDock } from './member-status.js'
+import { MEMBER_CSS, MemberDock, GroupApprovalDock } from './member-status.js'
 import { IM_CSS } from './im-page.js'
 import { GOAL_CSS } from './goal.js'
-import { USER_MESSAGE_CSS, UserMessageCell, canDrawUserMessages } from './user-message.js'
+import { USER_MESSAGE_CSS } from './user-message.js'
+import { TASK_MESSAGE_CSS } from './task-message.js'
+import { installTaskInputs as registerTaskInputs } from './task-inputs.js'
 import { QueueDock, QUEUE_CSS } from './queue-dock.js'
 import { noticeApprovals } from './approval-notices.js'
 import { listedOpener } from './open-listed.js'
@@ -818,6 +823,7 @@ export function apply(ctx) {
       else if (kind === 'letgo') void actions.computerAllowForeground(botId)
     })
   }
+  actions.groupReplyNodes = supportsGroupReplyProjection(ctx)
   const face = () => ({ actions, hooks: { roster, ui, activity, work, memoryNews, registry, turnClock, live, computer, cards, heldCards, browserPages, browserTabs, browserHolds, surface, update, frame, sidebarPref } })
   // The queue dock's per-session verbs, supplied the way the shell's own dock
   // injects them (the session facade and the conversation service).
@@ -952,9 +958,11 @@ export function apply(ctx) {
   // commonly use and goes below whatever already holds the cell, so a plugin that
   // shadows the same cell neither breaks the install nor shows through.
   const BOT_PRIORITY = -100
+  ctx.effect(() => installGroupToolView(ctx.slots, { surface, face, component: GroupRelayToolView, priority: BOT_PRIORITY }), 'ds-bot: native group reply view')
   const shadow = (name, options, component) => ctx.slots.inject(name, () => ctx.slots.register({
     name, ...options, ...(options.priority === undefined ? {} : { priority: freePriority(ctx.slots.entries(name), options) }),
   }, component))
+  const installTaskInputs = () => registerTaskInputs(ctx.slots, { roster, face, priority: BOT_PRIORITY })
   const installHeader = () => ctx.slots.inject('conversation.session.header', () => installHeaderNavigation(ctx.slots, face, HeaderPill, BOT_PRIORITY))
 
   // The "@" menu's Bot group and the chats "+" references. The composer's controller
@@ -1025,6 +1033,7 @@ export function apply(ctx) {
     () => installCompiledStyles(MODEL_CSS + FOLDER_CSS + BOT_SETTINGS_CSS + GROUP_SETTINGS_CSS + AVATAR_LIBRARY_CSS, 'models'),
     () => installCompiledStyles(USAGE_CSS, 'usage'),
     () => installCompiledStyles(SCHEDULE_CSS, 'schedules'),
+    () => installCompiledStyles(TASKFLOW_CSS, 'taskflow'),
     () => installCompiledStyles(FEEDBACK_CSS, 'feedback'),
     () => installCompiledStyles(ABOUT_CSS, 'about'),
     () => installCompiledStyles(MEMBER_CSS, 'members'),
@@ -1054,6 +1063,8 @@ export function apply(ctx) {
     () => shadow('shell.overlay', { id: 'bot-toast', order: 60, inject: face }, ErrorToast),
   ]
   const installConversation = () => [
+    () => installGroupReplyProjection(ctx),
+    () => actions.groupReplyNodes ? shadow('conversation.chat.node', { key: GROUP_REPLY_KIND, priority: BOT_PRIORITY, locale: 'chat', inject: face }, GroupReplyCell) : () => {},
     () => installCompiledStyles(CONVERSATION_CSS, 'conversation'),
     () => installCompiledStyles(TURN_ERROR_CSS, 'turn-errors'),
     () => installCompiledStyles(QUEUE_CSS, 'queue'),
@@ -1080,7 +1091,8 @@ export function apply(ctx) {
     // A Bot chat leaves DSH's context lines (tool updates, injected context) out; a Bot
     // message spliced in mid-turn gets an event line from the step that reads it instead.
     () => shadow('conversation.chat.node', { key: 'context', priority: BOT_PRIORITY, locale: 'chat' }, CellEmpty),
-    ...(canDrawUserMessages() ? ['user', 'steering'].map(key => () => shadow('conversation.chat.node', { key, priority: BOT_PRIORITY, locale: 'chat', inject: face }, UserMessageCell)) : []),
+    () => installCompiledStyles(TASK_MESSAGE_CSS, 'task-messages'),
+    installTaskInputs,
     () => shadow('conversation.input.permission', { priority: BOT_PRIORITY }, Nothing),
     () => shadow('conversation.input.plan', { priority: BOT_PRIORITY }, Nothing),
     // The composer carries no model picker or run statistics; a Bot's model lives
@@ -1095,6 +1107,7 @@ export function apply(ctx) {
       priority: BOT_PRIORITY,
       select: owner => (owner.pendingInteraction?.kind === 'question' ? owner.pendingInteraction : null),
     }, QuestionCard),
+    () => shadow('conversation.input.dock', { id: 'bot-approvals', order: -130, inject: face }, GroupApprovalDock),
     () => shadow('conversation.input.dock', { id: 'bot-members', order: -120, inject: face }, MemberDock),
     () => shadow('conversation.input.dock', { id: 'bot-model', order: -110, inject: face }, ModelChoiceDock),
     () => shadow('conversation.input.dock', { id: 'bot-question', order: -100, inject: face }, QuestionDock),

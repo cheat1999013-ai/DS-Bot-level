@@ -51,13 +51,13 @@ const LIST_PAGE = 100
 const LIST_READ_LIMIT = 500
 const OTHER_TASK_REFUSAL = 'This task belongs to another chat. A Bot reads and changes only the tasks of its own chat.'
 const sameOwner = (a, b) => a !== undefined && b !== undefined && a.botId === b.botId && a.roomId === b.roomId
-const timingOf = (selector) => {
+export const timingOf = (selector) => {
   const [key] = Object.keys(selector)
   return { kind: TIMING_KINDS[key], [key]: selector[key] }
 }
 
 // The settings form's timing as a create request selector.
-function selectorOf(when) {
+export function selectorOf(when) {
   const zone = typeof when?.timeZone === 'string' && when.timeZone !== '' ? when.timeZone : 'UTC'
   switch (when?.kind) {
     case 'at': {
@@ -88,6 +88,7 @@ function selectorOf(when) {
 export function install(rt) {
   const { ctx } = rt
   let service = null
+  rt.scheduleService = () => service
 
   const attach = (sub) => {
     const own = sub.schedule
@@ -112,7 +113,8 @@ export function install(rt) {
     if (service === null) return { available: false, tasks: [] }
     const now = Date.now()
     const tasks = []
-    for (const entry of await service.catalog()) {
+    const catalog = await service.catalog()
+    for (const entry of catalog) {
       const sessionId = sessionOf(entry)
       const owner = sessionId === undefined ? undefined : ownerOf(sessionId)
       if (!known(owner)) continue
@@ -123,7 +125,7 @@ export function install(rt) {
         : entry.status === 'paused' ? 'paused' : 'finished'
       tasks.push({ ...entry, sessionId, ...owner, state })
     }
-    return { available: true, tasks }
+    return { available: true, tasks: [...tasks, ...(rt.groupSchedulesView?.(catalog) ?? [])] }
   }
 
   const endpoints = {
@@ -190,7 +192,7 @@ export function install(rt) {
 
   // DSH 0.2.2's task ids are Host-wide, so a Bot's schedule tools reach only the tasks
   // that deliver to its own chat, or to the same group place, in any of its parts.
-  ctx.on('tools/pre-execute', async (exec, next) => {
+  ctx.on('tools/pre-execute', async function checkOwnSchedules(exec, next) {
     const decision = await next()
     if (decision.kind !== 'allow' || !OWN_TASK_TOOLS.includes(exec.name) || service === null || !hostWide(service)) return decision
     await rt.load()

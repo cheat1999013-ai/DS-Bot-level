@@ -103,6 +103,19 @@ test('packs expand only to MCP and skill items', () => {
   assert.throws(() => expandCapabilityNames(['bad'], { ...items, bad: { kind: 'pack', items: ['team'] } }), /unavailable capability/)
 })
 
+test('recreating a capability restores the assignment of its applied Bot profile', async t => {
+  const env = await setup()
+  t.after(() => env.dispose())
+  await env.rt.capabilityEndpoint('capability-save', { name: 'review', kind: 'skill', content: 'first' })
+  await env.rt.profileEndpoint('profile-save', { profile: { name: 'research', capabilities: ['review'] } })
+  await env.rt.profileEndpoint('profile-apply', { name: 'research', botId: 'chief' })
+  await env.rt.capabilityEndpoint('capability-delete', { name: 'review' })
+  assert.deepEqual(env.rt.state.bots.chief.capabilities, [])
+  await env.rt.capabilityEndpoint('capability-save', { name: 'review', kind: 'skill', content: 'second' })
+  assert.deepEqual(env.rt.state.bots.chief.capabilities, ['review'])
+  assert.deepEqual((await env.rt.profileEndpoint('profiles')).profiles[0].missing, [])
+})
+
 test('state migration adds an empty library and Bot attachment lists', async t => {
   const old = team()
   delete old.capabilities

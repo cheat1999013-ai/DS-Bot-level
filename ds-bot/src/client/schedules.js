@@ -71,6 +71,7 @@ export function timingText(task) {
   }
 }
 const nextText = (task) => {
+  if (task.schedulingError) return t('Needs repair')
   if (task.state === 'overdue' || (task.state === undefined && task.status === 'active' && Date.parse(task.scheduledAt) <= Date.now())) return t('Overdue: {time}', { time: dayAndTime(Date.parse(task.scheduledAt)) })
   if (task.status === 'paused') return t('Paused')
   return task.status === 'active' ? t('Next: {time}', { time: dayAndTime(Date.parse(task.scheduledAt)) }) : t('Finished')
@@ -88,14 +89,18 @@ function TaskRow({ task, actions, onView, showBot, roster }) {
   const remove = () => {
     if (!confirming) { setConfirming(true); return }
     setBusy(true)
-    void actions.scheduleDelete(task.sessionId, task.id).then(onView, () => setBusy(false))
+    const operation = task.mode === 'group-card' ? actions.groupScheduleDelete(task.id) : actions.scheduleDelete(task.sessionId, task.id)
+    void operation.then(onView, () => setBusy(false))
   }
   const room = task.roomId ? roster.roomsById[task.roomId] : undefined
   return h('div', { className: 'bt-set-row bt-task', 'data-done': task.status === 'active' ? undefined : '', 'data-busy': busy || undefined },
     showBot ? h(BotAvatar, { bot: roster.byId[task.botId], size: 28, badge: false, live: false }) : null,
     h('button', { type: 'button', className: 'bt-set-copy bt-task-copy', 'aria-expanded': expanded || undefined, onClick: () => setExpanded(open => !open) },
       h('span', { className: 'bt-task-title' }, task.title),
+      task.mode === 'group-card' ? h('span', { className: 'bt-set-hint' }, `${t('Group task card')} · ${roster.byId[task.memberId]?.name ?? t('Unavailable')}`) : null,
       h('span', { className: 'bt-set-hint' }, [timingText(task), room ? t('in {name}', { name: room.name }) : ''].filter(Boolean).join(' · ')),
+      task.lastRun ? h('span', { className: 'bt-set-hint' }, `${t('Last run')}: ${t({ dispatched: 'Dispatched', duplicate: 'Occurrence already recorded', dispatching: 'Dispatching', blocked: 'Not dispatched', 'needs-review': 'Needs review' }[task.lastRun.state] ?? 'Needs review')}${task.lastRun.error ? ` · ${task.lastRun.error}` : ''}`) : null,
+      task.schedulingError ? h('span', { className: 'bt-danger bt-set-hint' }, task.schedulingError) : null,
       task.prompt && task.prompt !== task.title ? h('span', { className: 'bt-task-prompt', 'data-open': expanded || undefined }, task.prompt) : null),
     h('span', { className: 'bt-task-next', 'data-state': task.state === 'overdue' ? 'overdue' : undefined }, nextText(task)),
     h('button', {
@@ -113,9 +118,10 @@ function inAnHour() {
 const KINDS = [['at', 'Once'], ['daily', 'Every day'], ['weekly', 'Every week'], ['every', 'Repeat']]
 const UNITS = [['minutes', 1, 'minutes'], ['hours', 60, 'hours'], ['days', 1440, 'days']]
 
-function TaskForm({ roster, actions, start, onDone, onCancel }) {
-  // A task goes to a Bot's chat or to a group chat, where it reads as your message.
-  const [target, setTarget] = useState(start ?? roster.bots[0]?.id ?? '')
+export function TaskForm({ roster, actions, start, onDone, onCancel, group = false }) {
+  const choices = group ? roster.rooms : roster.bots
+  const [target, setTarget] = useState(choices.some(item => item.id === start) ? start : choices[0]?.id ?? '')
+  const [memberId, setMemberId] = useState('')
   const [title, setTitle] = useState('')
   const [prompt, setPrompt] = useState('')
   const [kind, setKind] = useState('daily')
@@ -126,6 +132,9 @@ function TaskForm({ roster, actions, start, onDone, onCancel }) {
   const [unit, setUnit] = useState('hours')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const room = group ? roster.rooms.find(item => item.id === target) : null
+  const members = (room?.members ?? []).filter(id => id !== room.admin).map(id => roster.byId[id]).filter(Boolean)
+  const executor = members.some(member => member.id === memberId) ? memberId : members[0]?.id ?? ''
   const timing = () => {
     if (kind === 'at') return { kind, at: new Date(at).toISOString() }
     if (kind === 'every') return { kind, minutes: Math.round(Number(count) * UNITS.find(([id]) => id === unit)[1]) }
@@ -138,16 +147,22 @@ function TaskForm({ roster, actions, start, onDone, onCancel }) {
     setError('')
     let when
     try { when = timing() } catch { setError(t('Pick a date and time')); setBusy(false); return }
-    void actions.scheduleCreate({ target, title, prompt, when })
+    const operation = group ? actions.groupScheduleCreate({ target, memberId: executor, title, prompt, when })
+      : actions.scheduleCreate({ target, title, prompt, when })
+    void operation
       .then(onDone, (failure) => { setError(hostText(failure?.message ?? String(failure))); setBusy(false) })
   }
   const toggleDay = day => setWeekdays(days => (days.includes(day) ? days.filter(item => item !== day) : [...days, day].sort()))
   return h('form', { className: 'bt-set-card bt-task-form', onSubmit: submit },
     h('label', { className: 'bt-set-row bt-bs-row' },
       h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Send to'))),
-      h('select', { className: 'bt-select bt-task-bot', value: target, onChange: event => setTarget(event.target.value) },
-        h('optgroup', { label: t('Bots') }, roster.bots.map(bot => h('option', { key: bot.id, value: bot.id }, bot.name))),
-        roster.rooms.length > 0 ? h('optgroup', { label: t('Group chats') }, roster.rooms.map(room => h('option', { key: room.id, value: room.id }, room.name))) : null)),
+      h('select', { className: 'bt-select bt-task-bot', value: target, 'aria-label': t(group ? 'Group chats' : 'Bots'), onChange: event => { setTarget(event.target.value); setMemberId('') } },
+        choices.map(item => h('option', { key: item.id, value: item.id }, item.name)))),
+    group ? h('label', { className: 'bt-set-row bt-bs-row' },
+      h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Executor'))),
+      h('select', { className: 'bt-select bt-task-bot', value: executor, 'aria-label': t('Executor'), onChange: event => setMemberId(event.target.value) },
+        members.map(member => h('option', { key: member.id, value: member.id }, member.name)))) : null,
+    group ? h('p', { className: 'bt-set-hint' }, t('At the scheduled time, the group principal dispatches a task card and receives the submitted result for acceptance.')) : null,
     h('label', { className: 'bt-set-row bt-bs-row' },
       h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Name'))),
       h('input', { className: 'bt-bs-input', value: title, maxLength: 120, placeholder: t('Morning briefing'), autoFocus: true, onChange: event => setTitle(event.target.value) })),
@@ -171,7 +186,7 @@ function TaskForm({ roster, actions, start, onDone, onCancel }) {
     error ? h('div', { className: 'bt-set-row' }, h('span', { className: 'bt-danger bt-set-hint' }, error)) : null,
     h('div', { className: 'bt-set-row bt-task-foot' },
       h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onCancel }, t('Cancel')),
-      h('button', { type: 'submit', className: 'bt-send bt-soft-sm', disabled: busy || !target || title.trim() === '' || prompt.trim() === '' }, busy ? t('Creating…') : t('Create task'))))
+      h('button', { type: 'submit', className: 'bt-send bt-soft-sm', disabled: busy || !target || (group && !executor) || title.trim() === '' || prompt.trim() === '' }, busy ? t('Creating…') : t(group ? 'Create group task' : 'Create task'))))
 }
 
 // Settings has no schedule service to show: Automation tasks are off in DSH.
@@ -188,6 +203,8 @@ function AutomationOff({ actions }) {
 // Bot's own view gets here.
 export function SchedulesPage({ roster, actions, start }) {
   const view = useSchedules(actions)
+  const groupStart = start?.startsWith('group:') ? start.slice(6) : roster.rooms.some(room => room.id === start) ? start : null
+  const [group, setGroup] = useState(groupStart !== null)
   const owner = start?.startsWith('bot:') ? start.slice(4) : start?.startsWith('room:') ? start.slice(5) : null
   const [adding, setAdding] = useState(Boolean(start) && owner === null)
   if (view === null) return h('div', { className: 'bt-set-hint' }, t('Loading…'))
@@ -199,9 +216,10 @@ export function SchedulesPage({ roster, actions, start }) {
   ].filter(([id, , , tasks]) => tasks.length > 0 && (owner === null || id === owner))
   return [
     adding
-      ? h(TaskForm, { key: 'form', roster, actions, start: owner ?? start, onDone: shown, onCancel: () => setAdding(false) })
+      ? h(TaskForm, { key: group ? 'group-form' : 'form', roster, actions, group, start: group ? groupStart ?? (roster.rooms.some(room => room.id === owner) ? owner : undefined) : owner ?? start, onDone: shown, onCancel: () => setAdding(false) })
       : h('div', { key: 'add', className: 'bt-actions' },
-          h('button', { type: 'button', className: 'bt-soft bt-soft-sm bt-with-icon', onClick: () => setAdding(true) }, h(PlusIcon), t('New task')),
+          h('button', { type: 'button', className: 'bt-soft bt-soft-sm bt-with-icon', onClick: () => { setGroup(false); setAdding(true) } }, h(PlusIcon), t('New Bot reminder')),
+          h('button', { type: 'button', className: 'bt-soft bt-soft-sm bt-with-icon', disabled: !roster.rooms.length, onClick: () => { setGroup(true); setAdding(true) } }, h(PlusIcon), t('New group task')),
           owner !== null ? h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => actions.openSettings('schedules') }, t('Show all')) : null),
     byChat.length === 0 && !adding
       ? h('div', { key: 'none', className: 'bt-set-card' }, h('div', { className: 'bt-set-row' }, h('span', { className: 'bt-set-hint' }, t('No scheduled tasks yet.'))))

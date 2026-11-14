@@ -138,8 +138,17 @@ export function install(rt) {
   const capabilitySave = async (body, options = {}) => {
     await rt.load()
     writeCheck()
+    const existed = own(ensureLibrary(), validateCapabilityName(body?.name)) !== undefined
     const item = itemInput(body ?? {}, options)
     await rt.save()
+    if (!existed) {
+      for (const bot of Object.values(state.bots)) {
+        const profile = own(state.profiles ?? {}, bot.profile)
+        if (!profile?.capabilities?.includes(item.name) || !bot.profileCapabilities?.includes(item.name)) continue
+        await setAttached(bot, item.name, true)
+      }
+      void scheduleReconcile()
+    }
     return item
   }
   const capabilityDelete = async (name, { botId, ui } = {}) => {

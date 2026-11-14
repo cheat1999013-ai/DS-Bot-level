@@ -98,7 +98,8 @@ const settleState = async (t, home, check) => {
 }
 const settle = async (check) => {
   const until = Date.now() + 3000
-  while (!check() && Date.now() < until) await new Promise(resolve => setImmediate(resolve))
+  // Avoid continuously reopening state files while Windows replaces them.
+  while (!check() && Date.now() < until) await realDelay(5)
   assert.ok(check(), 'condition not reached')
 }
 const text = message => message.content.map(block => block.text ?? '').join('\n')

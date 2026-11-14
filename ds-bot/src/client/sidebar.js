@@ -16,6 +16,7 @@ import { showsDshRow } from './dsh-offer.js'
 import { quietly } from './diagnostics.js'
 import { frameLayout, dragColumn, RAIL_WIDTH, FALLBACK_SIDEBAR_WIDTH, userSidebarToggle } from './frame-layout.js'
 import { chatRoom, dshCollapsed } from './frame-watch.js'
+import { SIDEBAR_SECTIONS, sidebarSection, useSidebarFold, sidebarFold, botFunction } from './sidebar-sections.js'
 
 // -------------------------------------------------------------------------
 // Sidebar
@@ -28,6 +29,15 @@ function useMarkedUnread(id, active, marked, actions) {
 }
 
 const PinMark = () => h('span', { className: 'bt-pin', 'aria-hidden': true }, h(PinMarkIcon))
+
+function foldableRow(row, id, actions, wide) {
+  if (!actions?.hideSidebarEntry) return row
+  return h('div', { className: 'bt-sidebar-entry', 'data-dsb-entry-wrap': id },
+    h('div', { className: 'bt-sidebar-entry-row' }, row),
+    h('button', { type: 'button', className: 'bt-sidebar-hide', 'data-dsb-hide-entry': id,
+      title: t('Hide temporarily'), 'aria-label': t('Hide temporarily'),
+      onClick: () => actions.hideSidebarEntry(id) }, wide ? t('Collapse') : '−'))
+}
 
 // The rail shows a row's name only on hover; the wide list does so when the name is
 // cut, which only the laid-out row can tell, so it is measured as the pointer enters.
@@ -98,7 +108,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
     h('span', { className: 'bt-tile-name' }, bot.name),
     bot.role ? h('span', { className: 'bt-chip' }, bot.role) : null))
   }
-  return h('button', {
+  return foldableRow(h('button', {
     type: 'button', className: 'bt-row', 'aria-label': label, 'aria-current': active ? 'page' : undefined,
     'data-bot-id': id, title: wide ? undefined : bot.name, onMouseEnter: wide ? nameIfCut : undefined, onClick: () => actions.openSession(id), onContextMenu,
   },
@@ -106,12 +116,13 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   pinned && !wide ? h(PinMark) : null,
   wide ? h('span', { className: 'bt-row-body' },
     h('span', { className: 'bt-row-name' }, h('span', { className: 'bt-row-title' }, bot.name), bot.engine ? h(AgentBadge, { engine: bot.engine }) : null, pinned ? h(PinMark) : null),
+    h('span', { className: 'bt-row-function', 'data-dsb-bot-function': id, title: botFunction(bot, t('Bot')) }, botFunction(bot, t('Bot'))),
     runningLine ? h('span', { className: 'bt-row-preview' }, runningLine)
       : awayLine ? h('span', { className: 'bt-row-preview' }, awayLine)
         : waitsFor ? h('span', { className: 'bt-row-preview' }, waitsFor)
           : preview ? h('span', { className: 'bt-row-preview' }, preview) : null) : null,
   wide && unread && !active ? h('span', { className: 'bt-unread', 'aria-hidden': true })
-    : !wide && !active && (alert || unread) ? h('span', { className: `bt-dot${alert ? ' bt-dot-wait' : ''}`, 'aria-hidden': true }) : null)
+    : !wide && !active && (alert || unread) ? h('span', { className: `bt-dot${alert ? ' bt-dot-wait' : ''}`, 'aria-hidden': true }) : null), id, id === roster.mainBotId ? null : actions, wide)
 }
 
 function RoomRow({ room, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useWork, wide, marked }) {
@@ -130,7 +141,7 @@ function RoomRow({ room, roster, actions, useSessions, useSessionStatus, useSess
   if (room.hidden && !active) return null
   const pinned = room.pinned === true
   const label = [room.name, pinned ? t('Pinned') : '', members.length > 0 ? t('Working') : '', approval ? t('Waiting for your approval') : ''].filter(Boolean).join(', ')
-  return h('button', {
+  return foldableRow(h('button', {
     type: 'button', className: 'bt-row', 'aria-label': label, 'aria-current': active ? 'page' : undefined,
     'data-room-id': id, title: wide ? undefined : room.name, onMouseEnter: wide ? nameIfCut : undefined, onClick: () => actions.openSession(id),
     onContextMenu: (event) => { event.preventDefault(); actions.openMenu({ kind: 'room', id, x: event.clientX, y: event.clientY }) },
@@ -142,7 +153,7 @@ function RoomRow({ room, roster, actions, useSessions, useSessionStatus, useSess
     workingLine ? h('span', { className: 'bt-row-preview' }, workingLine) : preview ? h('span', { className: 'bt-row-preview' }, preview) : null) : null,
   wide && approval && !active ? h('span', { className: 'bt-unread bt-unread-wait', 'aria-hidden': true })
     : wide && unread && !active ? h('span', { className: 'bt-unread', 'aria-hidden': true })
-      : !wide && !active && (approval || unread) ? h('span', { className: `bt-dot${approval ? ' bt-dot-wait' : ''}`, 'aria-hidden': true }) : null)
+      : !wide && !active && (approval || unread) ? h('span', { className: `bt-dot${approval ? ' bt-dot-wait' : ''}`, 'aria-hidden': true }) : null), id, actions, wide)
 }
 
 const agentSessionTitle = session => (session.title === '' ? t('New session') : session.title)
@@ -227,7 +238,7 @@ function AgentRow({ agent, actions, useSessions, useSessionStatus, useUi, wide, 
   const preview = sessions[0] === undefined ? t('New session') : agentSessionTitle(sessions[0])
   const label = ['DSH Agent', running ? t('Working') : '', unread ? t('Unread activity') : ''].filter(Boolean).join(', ')
   const open = active && wide
-  return h('div', { className: 'bt-agent' },
+  return foldableRow(h('div', { className: 'bt-agent' },
     h('button', {
       type: 'button', className: 'bt-row', 'aria-label': label, 'aria-current': active ? 'page' : undefined,
       'data-agent-id': agent.id, title: wide ? undefined : 'DSH Agent', onClick: () => actions.openAgent(agent.id),
@@ -246,7 +257,7 @@ function AgentRow({ agent, actions, useSessions, useSessionStatus, useUi, wide, 
         sessions.map((session, index) => h(AgentSessionRow, {
           key: session.id, session, agent, actions, index: index + 1,
           renaming: renaming === session.id,
-        })))))
+        }))))), agent.id, actions, wide)
 }
 
 function useListGlide(listRef, layout, key) {
@@ -309,6 +320,7 @@ export function TeamSidebar(props) {
   const { wide, useRoster, useUi, useSessions, actions } = props
   const listRef = useRef(null)
   const roster = useRoster(value => value)
+  const folded = useSidebarFold()
   const markedUnread = useUi(value => value.unread)
   const leftDrawer = useUi(value => value.leftDrawer === true)
   const details = useUi(value => value.details ?? null)
@@ -343,10 +355,12 @@ export function TeamSidebar(props) {
       // The Agent sorts by its most recent Session, falling back to when it was added.
       ...(roster.agents ?? []).map(agent => ({ kind: 'agent', item: agent, at: Math.max(0, ...agent.sessions.map(id => stamps[id] ?? 0)) || agent.createdAt })),
     ]
-    return entries.sort((a, b) => Number(Boolean(b.item.pinned)) - Number(Boolean(a.item.pinned)) || b.at - a.at)
+    return entries.map(entry => ({ ...entry, section: sidebarSection(entry.kind) }))
+      .sort((a, b) => SIDEBAR_SECTIONS.indexOf(a.section) - SIDEBAR_SECTIONS.indexOf(b.section)
+        || Number(Boolean(b.item.pinned)) - Number(Boolean(a.item.pinned)) || b.at - a.at)
   }, [roster, updated])
   const main = roster.byId[roster.mainBotId]
-  useListGlide(listRef, wideContent, order.map(entry => entry.item.id).join(','))
+  useListGlide(listRef, wideContent, JSON.stringify([order.map(entry => entry.item.id), folded]))
   useLandOnMainBot(roster, useSessions, actions)
   useReportReady(roster.ready, roster)
 
@@ -532,12 +546,34 @@ export function TeamSidebar(props) {
   }
   const rowActions = {
     ...actions,
+    hideSidebarEntry: id => sidebarFold.hide(id),
     openSession: id => navigate(actions.openSession, id),
     openAgent: id => navigate(actions.openAgent, id),
     openAgentSession: id => navigate(actions.openAgentSession, id),
     newAgentSession: id => navigate(actions.newAgentSession, id),
   }
   const rowProps = { roster, actions: rowActions, useSessions, useUi, useSessionStatus: props.useSessionStatus, useSessionRetainInfo: props.useSessionRetainInfo, useActivity: props.useActivity, useWork: props.useWork, wide: wideContent }
+  const renderEntry = entry => entry.kind === 'bot'
+    ? h(BotRow, { key: entry.item.id, ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true })
+    : entry.kind === 'room'
+      ? h(RoomRow, { key: entry.item.id, ...rowProps, room: entry.item, marked: markedUnread[entry.item.id] === true })
+      : h(AgentRow, { key: entry.item.id, ...rowProps, agent: entry.item, marked: markedUnread[entry.item.id] === true })
+  const sectionLabels = { bot: t('Bot'), room: t('Bot groups'), other: t('Unclassified') }
+  const sections = SIDEBAR_SECTIONS.flatMap(section => {
+    const entries = order.filter(entry => entry.section === section)
+    if (!entries.length) return []
+    const hiddenIds = entries.filter(entry => folded.hidden.includes(entry.item.id)).map(entry => entry.item.id)
+    const collapsed = folded.collapsed[section] === true
+    return [h('div', { key: `section-${section}`, className: 'bt-sidebar-section',
+      'data-dsb-sidebar-section': section, 'data-dsb-collapsed': collapsed },
+    h('button', { type: 'button', className: 'bt-sidebar-section-toggle', 'data-dsb-toggle-section': section,
+      title: sectionLabels[section], 'aria-expanded': !collapsed, onClick: () => sidebarFold.toggle(section) },
+    h('span', { 'aria-hidden': true }, collapsed ? '▸' : '▾'), sectionLabels[section]),
+    hiddenIds.length ? h('button', { type: 'button', className: 'bt-sidebar-restore', 'data-dsb-restore-section': section,
+      title: t('Folded {count}', { count: hiddenIds.length }), onClick: () => sidebarFold.restore(hiddenIds) },
+    t('Restore'), wideContent ? ` (${hiddenIds.length})` : '') : null),
+    ...(collapsed ? [] : entries.filter(entry => !folded.hidden.includes(entry.item.id)).map(renderEntry))]
+  })
   // Typing while the sidebar has focus starts a search.
   const typeToSearch = (event) => {
     if (event.defaultPrevented || event.key.length !== 1 || event.key === ' ' || event.metaKey || event.ctrlKey || event.altKey || event.nativeEvent.isComposing) return
@@ -589,11 +625,10 @@ export function TeamSidebar(props) {
     wideContent && roster.readOnly ? h('div', { className: 'bt-hint bt-read-only', role: 'status' }, hostText(roster.readOnly)) : null,
     h('div', { ref: listRef, className: 'bt-list', role: 'region', 'aria-label': t('Bot list') },
       wideContent ? (main ? h(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : h('div', { className: 'bt-hint' }, bootFailed ? bootHint() : t('Setting up your Main Bot…'))) : null,
-      order.map(entry => (entry.kind === 'bot'
-        ? h(BotRow, { key: entry.item.id, ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true })
-        : entry.kind === 'room'
-          ? h(RoomRow, { key: entry.item.id, ...rowProps, room: entry.item, marked: markedUnread[entry.item.id] === true })
-          : h(AgentRow, { key: entry.item.id, ...rowProps, agent: entry.item, marked: markedUnread[entry.item.id] === true })))),
+      sections,
+      folded.hidden.length > 0 || Object.values(folded.collapsed).some(Boolean)
+        ? h('button', { type: 'button', className: 'bt-sidebar-restore-all', 'data-dsb-restore-all': true,
+          onClick: () => sidebarFold.reset() }, t('Restore all')) : null),
     foot)
   return h(Fragment, null,
     h(TitleToggle, { hidden: mode === 'hidden', onToggle }),
@@ -1085,6 +1120,26 @@ export function BrandName() {
 // FooterAccount only shows when the seat went to no one. The shell's footer classes
 // are CSS-module names, so they match on their stems.
 export const SIDEBAR_CSS = `
+.bt-sidebar-section{display:flex;align-items:center;flex-wrap:wrap;gap:4px;padding:10px 8px 3px;min-width:0;color:var(--bt-ink-2);font-size:11px}
+.bt-sidebar-section-toggle,.bt-sidebar-restore,.bt-sidebar-hide,.bt-sidebar-restore-all{appearance:none;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;border-radius:6px;min-width:0}
+.bt-sidebar-section-toggle{display:inline-flex;align-items:center;gap:5px;padding:3px 2px;text-align:left}
+.bt-sidebar-restore{margin-left:auto;padding:3px;color:var(--bt-ink-2)}
+.bt-sidebar-entry{display:flex;align-items:center;gap:2px;min-width:0}
+.bt-sidebar-entry-row{flex:1 1 auto;min-width:0}
+.bt-sidebar-entry-row>.bt-row{width:100%}
+.bt-sidebar-hide{flex:0 0 auto;padding:4px;font-size:11px;line-height:16px;color:var(--bt-ink-2)}
+.bt-sidebar-restore-all{padding:7px 8px;margin:4px;color:var(--bt-ink-2);font-size:11px}
+.bt-row-function{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;line-height:16px;color:var(--bt-ink-2)}
+.bt-sidebar-section button:hover,.bt-sidebar-hide:hover,.bt-sidebar-restore-all:hover{background:var(--bt-hover)}
+.bt-sidebar-section button:focus-visible,.bt-sidebar-hide:focus-visible,.bt-sidebar-restore-all:focus-visible{outline:2px solid var(--bt-accent);outline-offset:1px}
+.bt-rail .bt-sidebar-section{padding:7px 2px 2px;font-size:11px;justify-content:center}
+.bt-rail .bt-sidebar-section-toggle{flex-wrap:wrap;justify-content:center;gap:2px}
+.bt-rail .bt-sidebar-restore{margin-left:0;padding:2px}
+.bt-rail .bt-sidebar-entry{display:grid;grid-template-columns:minmax(0,1fr) 56px minmax(0,1fr);gap:0;width:100%}
+.bt-rail .bt-sidebar-entry-row{grid-column:2;grid-row:1}
+.bt-rail .bt-sidebar-entry-row>.bt-row{width:56px}
+.bt-rail .bt-sidebar-hide{grid-column:3;grid-row:1;justify-self:end;padding:2px;font-size:12px}
+.bt-rail .bt-sidebar-restore-all{padding:5px 2px;white-space:normal}
 .bt-confirm{width:260px;max-width:72vw;padding:10px 12px 12px;display:flex;flex-direction:column;gap:10px}
 .bt-confirm-text{margin:0;font-size:13px;line-height:19px;color:var(--bt-ink-2)}
 .bt-confirm-error{margin:0;font-size:12px;line-height:17px;color:var(--bt-danger);overflow-wrap:anywhere}

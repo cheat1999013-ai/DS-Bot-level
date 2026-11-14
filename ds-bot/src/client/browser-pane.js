@@ -20,10 +20,10 @@ import { rectsOverlap } from './browser-overlap.js'
 
 export const PANEL_LINGER_MS = 300
 const WIDTH_KEY = STORAGE.browserWidth
-// One width for the panel, shared by both views. The Bot page keeps it within
-// DETAILS_WIDTH..DETAILS_MAX, so a wider browser comes back to DETAILS_MAX and a
-// narrower one keeps its width; the browser takes any width from MIN_WIDTH.
+// The panel keeps one saved width. Taskflow can expand while the chat retains
+// MIN_CHAT; other details keep their compact range.
 const DEFAULT_WIDTH = 520
+const TASKFLOW_WIDTH = 840
 const DETAILS_WIDTH = 320
 const DETAILS_MAX = 520
 const MIN_WIDTH = 360
@@ -66,9 +66,9 @@ const savedWidth = () => {
 // `room` is what the panel and the conversation share: the viewport minus the
 // left column's footprint (frame-layout.js). The panel never takes the last
 // MIN_CHAT px of it; below that it covers the conversation instead.
-const widthRange = (view, room) => (view === 'browser'
+const widthRange = (view, room, taskflow = false) => (view === 'browser'
   ? [MIN_WIDTH, room - MIN_CHAT]
-  : [DETAILS_WIDTH, Math.min(DETAILS_MAX, room - MIN_CHAT)])
+  : [DETAILS_WIDTH, Math.min(taskflow ? TASKFLOW_WIDTH : DETAILS_MAX, room - MIN_CHAT)])
 const fitWidth = (width, [low, high]) => Math.round(Math.max(low, Math.min(width, high)))
 // The address as the bar shows it while not editing: no scheme, no trailing slash.
 const shortAddress = url => String(url ?? '').replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/$/, '')
@@ -541,8 +541,9 @@ export function BotPanel({ pane, leaving, room, overlay, roster, actions, useSes
   const instant = dragging || resizing
   const [reading, setReading] = useState(false)
 
-  const panelWidth = fitWidth(width ?? (view === 'browser' ? DEFAULT_WIDTH : DETAILS_WIDTH), widthRange(view, room))
-  // Once the browser has shown, the Bot page keeps its width (up to DETAILS_MAX).
+  const taskflow = view === 'details' && pane.tab === 'taskflow'
+  const panelWidth = fitWidth(width ?? (view === 'browser' ? DEFAULT_WIDTH : taskflow ? TASKFLOW_WIDTH : DETAILS_WIDTH), widthRange(view, room, taskflow))
+  // A visited browser preserves the user's chosen width when switching views.
   useLayoutEffect(() => { if (view === 'browser' && width === null) setWidth(DEFAULT_WIDTH) }, [view, width])
   useLayoutEffect(() => { chatRoom.hold(instant) }, [instant])
   // A view switch that changes the width holds the guest back and pins both views to
@@ -686,7 +687,7 @@ export function BotPanel({ pane, leaving, room, overlay, roster, actions, useSes
     const panel = root.current
     const grip = event.currentTarget
     grip.setPointerCapture?.(event.pointerId)
-    const range = widthRange(view, room)
+    const range = widthRange(view, room, taskflow)
     const from = { x: event.clientX, width: panelWidth }
     let next = panelWidth
     setDragging(true)

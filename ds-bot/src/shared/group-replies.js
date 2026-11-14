@@ -3,6 +3,14 @@
 // (host/parts.js): the result's JSON holds the round's `replies`, in the order
 // the live view draws them.
 
+export function relayRange(text) {
+  try {
+    const value = JSON.parse(text)
+    if (Number.isInteger(value?.from)) return { from: value.from, ...(Number.isInteger(value.to) ? { to: value.to } : {}), ...(typeof value.anchor === 'string' ? { anchor: value.anchor } : {}) }
+  } catch { /* legacy inline results or pruned content */ }
+  return undefined
+}
+
 // Compaction can prune the middle of a long tool result, which leaves invalid
 // JSON: then every complete reply object that survived is recovered so the turn
 // still draws what it can.

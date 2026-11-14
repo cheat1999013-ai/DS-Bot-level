@@ -229,7 +229,16 @@ test('a sidebar row shows its name on hover when the name is hidden or cut', () 
       useSessionStatus: pick => pick(new Map()), useSessionRetainInfo: () => null,
       useActivity: pick => pick({}), useWork: pick => pick({ waiting: {}, rooms: {}, approvals: [] }),
     }))
-    return Object.fromEntries(rows.map(row => [row.type.name, row.type(row.props)]))
+    const buttonOf = tree => {
+      const pending = [tree]
+      while (pending.length) {
+        const node = pending.shift()
+        if (node?.props?.className === 'bt-row') return node
+        pending.push(...[node?.props?.children ?? []].flat(Infinity))
+      }
+      throw new Error('Native sidebar button missing')
+    }
+    return Object.fromEntries(rows.map(row => [row.type.name, buttonOf(row.type(row.props))]))
   }
   const rail = rowsOf('rail')
   assert.equal(rail.BotRow.props.title, 'Writer')

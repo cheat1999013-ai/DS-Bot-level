@@ -85,6 +85,25 @@ export function freePriority(entries, { priority, key, id }) {
   return Math.min(priority, ...taken)
 }
 
+// The native ToolCallTree also needs its atomic group view when it owns the node.
+export function installGroupToolView(slots, { surface, face, component, priority = -100 }) {
+  let off
+  const sync = () => {
+    if (!groupsFor(surface.getSnapshot()).conversation) {
+      off?.()
+      off = undefined
+    } else if (off === undefined) {
+      off = slots.inject('tool.call.toolview', () => slots.register({
+        name: 'tool.call.toolview', key: 'group_relay', inject: face,
+        priority: freePriority(slots.entries('tool.call.toolview'), { key: 'group_relay', priority }),
+      }, component))
+    }
+  }
+  const unsubscribe = surface.subscribe(sync)
+  sync()
+  return () => { unsubscribe(); off?.() }
+}
+
 export function readMode(storage = globalThis.localStorage) {
   try { return storage.getItem(STORAGE.surface) === 'agent' ? 'agent' : 'bot' } catch { return 'bot' }
 }

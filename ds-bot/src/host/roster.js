@@ -576,7 +576,24 @@ export function install(rt) {
   }
 
   // `actorId` is the Bot asking, or undefined for the user. Returns what changed, in words.
-  async function updateRoom(id, patch, actorId) {
+  // Keep a group's membership stable across the awaits used to stop departing work.
+  const roomUpdates = new Map()
+  function updateRoom(id, patch, actorId) {
+    const previous = roomUpdates.get(id)
+    let release
+    const gate = new Promise(resolve => { release = resolve })
+    roomUpdates.set(id, gate)
+    return (async () => {
+      try {
+        if (previous) await previous
+        return await applyRoomChange(id, patch, actorId)
+      } finally {
+        release()
+        if (roomUpdates.get(id) === gate) roomUpdates.delete(id)
+      }
+    })()
+  }
+  async function applyRoomChange(id, patch, actorId) {
     const asked = rt.roomOf(id)
     if (asked === undefined) throw new Error('Unknown group chat')
     planRoomChange(asked, patch, actorId)
@@ -584,6 +601,14 @@ export function install(rt) {
     const workDir = moving ? await rt.cleanWorkDir(patch.workDir ?? '') : undefined
     const clash = workDir === undefined ? undefined : await rt.privateClash(workDir)
     if (clash) throw new Error(`${workDir} is in or around the folder of ${clash.name}, a private Bot, so a group cannot work there`)
+    const leaving = planRoomChange(asked, patch, actorId).members
+    const leavingMembers = asked.members.filter(item => !leaving.includes(item))
+    const stoppedCards = []
+    for (const member of leavingMembers) {
+      await rt.stopMemberWork?.(id, member)
+      const cards = await rt.taskflowMemberLeft?.(id, member) ?? []
+      if (cards.length) stoppedCards.push({ member, cards })
+    }
     // No await from here until every change is written.
     const room = rt.roomOf(id)
     if (room === undefined) throw new Error('Unknown group chat')
@@ -593,10 +618,14 @@ export function install(rt) {
     const names = ids => ids.map(member => rt.botOf(member)?.name).filter(Boolean).join(', ')
     const added = members.filter(member => !room.members.includes(member))
     const removed = room.members.filter(member => !members.includes(member))
+    if (removed.length !== leavingMembers.length || removed.some(member => !leavingMembers.includes(member))) {
+      throw new Error('Group membership changed while stopping departing workers; retry the update')
+    }
     if (added.length > 0) changes.push(`added ${names(added)}`)
     // A deleted Bot still listed goes without a word.
     if (names(removed) !== '') changes.push(`removed ${names(removed)}`)
     // A member who leaves and comes back starts from a fresh look at the log.
+    if (admin !== (room.admin ?? null)) rt.taskflowTransferPrincipal?.(room.id, room.admin, admin)
     for (const member of removed) {
       if (room.seen) delete room.seen[member]
       rt.dropGroupSession(room, member)
@@ -643,12 +672,18 @@ export function install(rt) {
       await retitleRoom(room)
     }
     await rt.save()
+    for (const { member, cards } of stoppedCards) {
+      rt.taskflowMemberLeftNotice?.(room.id, member, cards)
+        .catch(error => rt.warn('ds-bot: taskflow leave notice failed: %s', String(error?.message ?? error)))
+    }
     return { room, changes }
   }
 
   async function deleteRoom(id) {
     const room = rt.roomOf(id)
     if (room === undefined) throw new Error('Unknown group chat')
+    await rt.cancelGroupSchedules?.(id)
+    await rt.stopRoomWork?.(id)
     // Before the group's Sessions leave the state, which the archive reads.
     const archived = rt.archiveGroupMemory(room)
     for (const botId of Object.keys(room.sessions ?? {})) rt.dropGroupSession(room, botId)
@@ -717,6 +752,12 @@ export function install(rt) {
       archiving: true,
     } : undefined
     await rt.releaseBot(id, [...parts, ...rt.groupSessionsOf(id)])
+    const affectedRooms = []
+    for (const room of Object.values(state.rooms)) {
+      if (!room.members.includes(id)) continue
+      const cards = await rt.taskflowMemberLeft?.(room.id, id) ?? []
+      if (cards.length) affectedRooms.push({ roomId: room.id, cards })
+    }
     if (closedArchive !== undefined) state.privateArchives = [...(state.privateArchives ?? []).filter(entry => entry.id !== id), closedArchive]
     delete state.bots[id]
     // The shared capability list is the user's and keeps its items; only a
@@ -746,6 +787,10 @@ export function install(rt) {
       delete closedArchive.archiving
     }
     const failed = await saveForDelete()
+    for (const { roomId, cards } of affectedRooms) {
+      rt.taskflowMemberLeftNotice?.(roomId, id, cards)
+        .catch(error => rt.warn('ds-bot: taskflow leave notice failed: %s', String(error?.message ?? error)))
+    }
     // Same as deleteRoom: stopActivity removes the Session's armed scheduled tasks.
     // Past parts are archived too: a part move can leave tasks on the old Session,
     // which otherwise stays armed and invisible. Already-archived ids are a no-op.

@@ -50,6 +50,12 @@ const isIdleRelayText = (text, everyone, priorBodies) => {
   return priorBodies.some(prev => prev !== '' && (prev === norm || (prev.length >= 8 && norm.length >= 8 && (prev.includes(norm) || norm.includes(prev)))))
 }
 
+// A sole appointment sentence can change the group leader; tasks and questions cannot.
+const taskflowAppointment = (text, members) => {
+  const match = /^@(.+?)\s+你是[\p{Script=Han}]{0,12}(?:主控|总控|负责人|总监|组长|统筹|主管|lead)[。！!]?$/iu.exec(text?.trim() ?? '')
+  return match ? members.find(bot => bot.name === match[1]) : undefined
+}
+
 // Logs written before rooms were versioned get sequence numbers in place.
 const ensureRoomLog = (room) => {
   if (typeof room.seq !== 'number') {
@@ -103,6 +109,7 @@ export const lineText = (line, text = line.text) => {
   if (line.kind === 'stopped') return `[The user stopped ${speakerOf(line)}'s work here]`
   if (line.kind === 'done') return `[${speakerOf(line)} finished the work it was asked for]`
   if (line.kind === 'notice') return `[${noticeText(line)}]`
+  if (line.kind === 'task') return `[Bot task] ${text}`
   return `${speakerOf(line)}: ${text}`
 }
 const transcript = (lines, textOfLine = line => line.text) => lines.map(line => lineText(line, textOfLine(line))).join('\n')
@@ -406,7 +413,23 @@ export function install(rt) {
   //    in the batch finishes rather than woken piecemeal on every early reply.
   const roomBatches = new Map()
   const memberBatch = new Map()
+  const quietWorkers = new Set()
   const batchKeyOf = (roomId, botId) => `${roomId}:${botId}`
+  rt.taskflowQuietWorker = (roomId, botId, enabled) => {
+    const key = batchKeyOf(roomId, botId)
+    if (enabled) quietWorkers.add(key)
+    else quietWorkers.delete(key)
+  }
+  rt.taskflowNotice = async (room, text) => {
+    ensureRoomLog(room)
+    appendRoom(room, { who: 'DS Bot', kind: 'notice', text })
+    for (const round of rt.roomProgress.values()) {
+      if (round.roomId === room.id) round.replies.push({ kind: 'notice', text, time: Date.now() })
+    }
+    await rt.save()
+  }
+  const isQuietWorker = (roomId, botId) => quietWorkers.has(batchKeyOf(roomId, botId))
+    || rt.taskflowIsQuietWorker?.(roomId, botId) === true
 
   const activeInRoom = (room, botId) => {
     const sessionId = room.sessions?.[botId]
@@ -514,7 +537,7 @@ export function install(rt) {
       }
       const say = (raw) => {
         const step = stripOwnName(member.name, raw)
-        if (isPass(step)) return
+        if (isPass(step) || isQuietWorker(room.id, member.id)) return
         said.push(step)
         postInRound(room, round, member, step, Date.now() - startedAt)
         heard(step)
@@ -667,7 +690,7 @@ export function install(rt) {
   // every turn that starts from now on sees them. The members the message's own round
   // would open with answer it inside this round, as soon as they are free. Each message
   // leaves the Session's inbox, so it does not open another round when this one ends.
-  function drainRoomInbox(room, round, agent) {
+  async function drainRoomInbox(room, round, agent) {
     // The greeting's prompt tells the admin the user has not written yet.
     if (round.kickoff) return
     const lines = waitingLines(agent).filter(line => agent.inbox.remove(line.id))
@@ -677,8 +700,14 @@ export function install(rt) {
     rt.goalUserMessage?.(room.id)
     const members = room.members.map(rt.botOf).filter(Boolean)
     for (const line of lines) {
+      const appointed = taskflowAppointment(line.text, members)
+      if (appointed !== undefined) {
+        await rt.updateRoom(room.id, { admin: appointed.id, mode: 'admin' })
+        room.taskflowLeader = true
+      }
       appendRoom(room, { who: 'User', text: line.text, ...(line.via ? { via: line.via } : {}) })
       round.replies.push({ kind: 'user', text: line.text, time: Date.now(), ...(line.via ? { via: line.via } : {}) })
+      if (appointed !== undefined) continue
       const { all, found } = mentionsIn(line.text, members)
       const note = all || found.length > 0 ? 'the user mentioned you' : 'new message from the user'
       const { speakers, ordered } = openingCall(room, { text: line.text })
@@ -748,7 +777,7 @@ export function install(rt) {
       if (!due) await new Promise((resolve) => { wake = resolve })
       due = false
       if (signal.aborted) break
-      drainRoomInbox(room, round, agent)
+      await drainRoomInbox(room, round, agent)
       for (const slot of round.slots) {
         if (!startable(round, slot)) continue
         const turn = memberTurn(room, round, slot, signal)
@@ -819,10 +848,11 @@ export function install(rt) {
     }
     const reply = await roomTurn(
       room, member, session.id, { text, images: prompt.images, files: prompt.files }, slot.note ?? 'your turn', signal, round, slot.by, said,
-      line => callFrom(room, round, member, line, called, { worked, byBot: slot.by !== undefined }),
+      line => { if (!isQuietWorker(room.id, member.id)) callFrom(room, round, member, line, called, { worked, byBot: slot.by !== undefined }) },
       onWork,
     )
-    const final = typeof reply === 'string' && !isPass(reply) ? reply : undefined
+    const final = typeof reply === 'string' && !isPass(reply) && !isQuietWorker(room.id, member.id) ? reply : undefined
+    const quietTaskflow = isQuietWorker(room.id, member.id)
     const subRunning = rt.hasSubagents?.(session.id) === true
     if (reply?.failure !== undefined) {
       // Not a pass: the user sees why the member is silent, and the round goes on.
@@ -869,9 +899,10 @@ export function install(rt) {
     if (reply?.failure !== undefined) rt.goalTaskReset?.(room.id, member.id, 'Could not finish: its model call failed')
     // Settle the member's place in its call batch when its work did not continue in the background.
     if (slot.status !== 'working') {
+      if (quietTaskflow && slot.status !== 'waiting-approval') rt.taskflowQuietWorker(room.id, member.id, false)
       const batch = (slot.batchKey ? roomBatches.get(slot.batchKey) : undefined) ?? memberBatch.get(batchKeyOf(room.id, member.id))
       if (batch !== undefined) {
-        if (slot.status === 'posted') {
+        if (slot.status === 'posted' && !quietTaskflow) {
           batch.done.push(member.name)
           if (called.size > 0) batch.answered = true
           if (worked) batch.worked = true
@@ -916,6 +947,14 @@ export function install(rt) {
           delete post.goalId
         }
       }
+      for (const post of posts) {
+        if (post.botId !== undefined || post.kickoff || post.goal !== undefined || post.images?.length || post.files?.length) continue
+        const appointed = taskflowAppointment(post.text, room.members.map(rt.botOf).filter(Boolean))
+        if (appointed === undefined) continue
+        await rt.updateRoom(room.id, { admin: appointed.id, mode: 'admin' })
+        room.taskflowLeader = true
+        post.quiet = true
+      }
       // A post a running round already logged stays inside the round this relay opens.
       const startSeq = Math.min(room.seq + 1, ...posts.map(post => post.logged).filter(seq => typeof seq === 'number'))
       // The opening greeting is a cue for the admin, not a line of the group; a member's
@@ -937,6 +976,7 @@ export function install(rt) {
           ...(post.images === undefined ? {} : { images: post.images }),
           ...(post.files === undefined ? {} : { files: post.files }),
           ...(post.via === undefined ? {} : { via: post.via }),
+          ...(post.taskflowEvent ? { kind: 'task', taskflowEvent: post.taskflowEvent } : {}),
         })
       }
       await rt.save()
@@ -1146,6 +1186,7 @@ export function install(rt) {
   // user asked for is left for the user to read.
   // `ordered`: a plain message everyone answers in turn, admin first; any other call
   // starts its members at once.
+  const recoveryCalls = new WeakMap()
   function openingCall(room, opener) {
     const everyone = room.members.map(rt.botOf).filter(Boolean)
     const members = everyone.filter(bot => bot.id !== opener.botId)
@@ -1153,6 +1194,13 @@ export function install(rt) {
     const at = speakers => ({ speakers, ordered: false })
     if (opener.kickoff) return at(admin ? [admin] : [])
     if (opener.quiet) return at([])
+    if (opener.taskflowEvent?.event === 'recovery') {
+      // Selection may inspect the same opener twice. Claim once per persisted
+      // recovery reservation, then cache only for this in-memory selection.
+      if (!recoveryCalls.has(opener)) recoveryCalls.set(opener,
+        rt.taskflowClaimRecovery?.(room.id, opener.botId, opener.taskflowEvent) === true)
+      return at(recoveryCalls.get(opener) ? everyone.filter(bot => bot.id === room.admin) : [])
+    }
     if (opener.done) return at(members.filter(bot => bot.id === opener.askedBy))
     // A goal post — the user's draft ask, an idle goal check, a resume — is the admin's alone.
     if (opener.goal !== undefined) return at(admin ? [admin] : [])
@@ -1162,7 +1210,7 @@ export function install(rt) {
     if (opener.late) return at(found.length > 0 ? found : members.filter(bot => bot.id === opener.askedBy))
     if (opener.member) return at(found)
     if (found.length > 0 && !all) return at(found)
-    if (!all && room.mode === 'admin' && admin) return at([admin])
+    if (!all && (room.mode === 'admin' || room.taskflowLeader) && admin) return at([admin])
     const speakers = admin ? [admin, ...members.filter(bot => bot !== admin)] : members
     return { speakers, ordered: !all && speakers.length > 1 }
   }
@@ -1211,8 +1259,9 @@ export function install(rt) {
         running.replies.push({ kind, botId: sender.id, name: sender.name, color: sender.color, time: Date.now() })
       } else {
         const line = [text, ...files.map(fileLine)].filter(Boolean).join('\n')
-        appendRoom(room, { who: sender.name, botId: sender.id, text: line, ...(files.length > 0 ? { files } : {}) })
-        running.replies.push({ botId: sender.id, name: sender.name, color: sender.color, text: line, time: Date.now() })
+        const task = extra.taskflowEvent ? { kind: 'task', taskflowEvent: extra.taskflowEvent } : {}
+        appendRoom(room, { who: sender.name, botId: sender.id, text: line, ...task, ...(files.length > 0 ? { files } : {}) })
+        running.replies.push({ botId: sender.id, name: sender.name, color: sender.color, text: line, ...task, time: Date.now() })
       }
       callPost(room, running, sender, text, extra)
       await rt.save()
@@ -1237,6 +1286,13 @@ export function install(rt) {
     const room = rt.roomOf(owner?.roomId ?? info.roomId)
     const member = rt.botOf(owner?.botId)
     if (room === undefined || member === undefined || !room.members.includes(member.id)) return
+    if (isQuietWorker(room.id, member.id)) {
+      if (!rt.hasSubagents?.(sessionId)) {
+        rt.taskflowQuietWorker(room.id, member.id, false)
+        dropMemberFromBatch(room, member.id)
+      }
+      return
+    }
     const text = stripOwnName(member.name, reply)
     // While a DSH subagent of this member is still running, the member's work is not
     // finished yet: post any non-empty text as a progress line and keep its batch open.
@@ -1287,7 +1343,8 @@ export function install(rt) {
   const callsIn = (room, member, text) => mentionsIn(text, room.members.map(rt.botOf).filter(Boolean)).found.some(bot => bot.id !== member.id)
   rt.callsRoomMember = (sessionId, info, raw) => {
     const { room, member } = memberIn(sessionId, info) ?? {}
-    return room !== undefined && member !== undefined && callsIn(room, member, stripOwnName(member.name, raw ?? ''))
+    return room !== undefined && member !== undefined && !isQuietWorker(room.id, member.id)
+      && callsIn(room, member, stripOwnName(member.name, raw ?? ''))
   }
 
   // What a member says while it works, into the group. While the member holds its place
@@ -1298,7 +1355,7 @@ export function install(rt) {
     const waiter = info?.role === 'room' ? rt.roomWaiters.get(info.exchangeId) : undefined
     if (waiter !== undefined) return waiter.say(text)
     const { room, member } = memberIn(sessionId, info) ?? {}
-    if (room === undefined) return
+    if (room === undefined || isQuietWorker(room.id, member.id)) return
     ensureRoomLog(room)
     const calls = callsIn(room, member, text)
     const running = [...rt.roomProgress.values()].find(round => round.roomId === room.id)
@@ -1330,6 +1387,7 @@ export function install(rt) {
     if (room === undefined) return
     const text = stripOwnName(member.name, raw)
     if (isPass(text)) return
+    rt.taskflowRecordProgress?.(room.id, member.id)
     const entry = held.get(sessionId) ?? { last: 0, lines: [] }
     held.set(sessionId, entry)
     entry.info = info

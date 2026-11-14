@@ -1,7 +1,7 @@
 import { createElement as h, Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { currentPart, latestMemoryChange } from './text.js'
-import { ArrowUpIcon, CloseIcon, ArrowDownIcon, GoalIcon, MemoryIcon } from './icons.js'
+import { ArrowUpIcon, CloseIcon, ArrowDownIcon, GoalIcon, MemoryIcon, ClockIcon } from './icons.js'
 import { botState, BotAvatar, RoomAvatar } from './mark.js'
 import { AgentBadge } from './agent-badge.js'
 import { ActivityIndicator } from './activity-row.js'
@@ -83,6 +83,7 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
   const view = goal ? goalView(goal, { roster, roomWork }) : null
   const goalShown = room !== undefined && !away && goal !== undefined
   const detailsOpen = useUi(state => state.details === sessionId)
+  const taskflowOpen = useUi(state => state.details === sessionId && state.tab === 'taskflow')
   const name = bot?.name ?? room?.name ?? ''
   const useNews = useMemoryNews ?? noNews
   const memoryIds = bot ? [bot.id] : room ? [room.id, ...room.members] : []
@@ -133,6 +134,10 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
     h('span', { className: 'bt-pill-go', 'aria-hidden': true }, h(GoArrow)))
   return h('div', { className: 'bt-head' },
     showGoal ? h(GoalIsland, { room, goal, view, open: goalOpen, composing: goalCompose, roomWork, roster, actions, pill }) : pill,
+    room && !away ? h('button', { type: 'button', className: 'bt-taskflow-trigger',
+      'aria-label': t('Taskflow'), title: t('Taskflow'), 'aria-expanded': taskflowOpen,
+      onClick: () => taskflowOpen ? actions.closePanel() : actions.showDetails(sessionId, 'taskflow'),
+    }, h(ClockIcon)) : null,
     h('span', { className: 'bt-sr', role: 'status' }, memoryNotice ? t('Memory updated') : ''),
     h(NewMessagePills, { key: sessionId, sessionId, useSessions, useUi, useTurnClock }),
     h(ActivityIndicator, { key: `activity:${sessionId}`, sessionId, useRoster, useSessionStatus, useSession, useLive, useWork, actions }))

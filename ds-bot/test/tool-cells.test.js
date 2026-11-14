@@ -172,6 +172,20 @@ test('a user message inside a group relay shows its time', () => {
   assert.deepEqual(times.map(node => node.props.title), [`Today ${clockOf(today)}`])
 })
 
+test('queued and settled task notices draw a task card rather than a user or Bot message', () => {
+  const taskflowEvent = { planId: 'plan-1', cardId: 'image' }
+  const message = '@Chief [Taskflow plan-1/image] 已提报，等待逐卡验收。'
+  const row = { kind: 'task', botId: 'writer', name: 'Writer', taskflowEvent, text: message, time: at(0, 14, 5) }
+  const settled = show(call('group_relay', 'task-notice', { content: { replies: [row] } }), { sessionId: 'room' })
+  const trigger = expand(TriggerCell({ node: { location: { turn: { turn: 1 } }, data: { seq: 19, time: row.time, source: { kind: 'bot', role: 'post', senderSessionId: 'writer', taskflowEvent }, content: text$(['[Group post from Writer]', message].join('\n')) } },
+    sessionId: 'room', useRoster: select => select(team()), useSessions: select => select({ byId: {} }), useTurnClock: select => select({}), useUi: select => select({ visits: {} }), actions: {} }))
+  for (const out of [settled, trigger]) {
+    assert.ok(find(out, node => node.props?.className === 'bt-task-message'))
+    assert.match(text(out), /Bot task/)
+    assert.equal(find(out, node => /^(bt-umsg|bt-urow|bt-group-msg)$/.test(node.props?.className)), undefined)
+  }
+})
+
 // LEGACY: a round from when groups paused at a relay limit still shows the pause,
 // with nothing to press.
 test('an old paused round shows the pause as a plain line', () => {

@@ -38,13 +38,23 @@ export function loadAppProfile() {
   const dir = resolveProfileDir(PROFILE)
   initProfile(dir, BUNDLES)
   claimBundles(dir)
-  return loadOwnBundles(dir, BUNDLES)
+  // The Bot's resource catalog needs the profile selected by this launcher.
+  // DSH_HOME alone does not identify which profile owns a loaded plugin.
+  const previous = process.env.DS_BOT_DSH_PROFILE
+  process.env.DS_BOT_DSH_PROFILE = PROFILE
+  try { return loadOwnBundles(dir, BUNDLES) } catch (error) {
+    if (previous === undefined) delete process.env.DS_BOT_DSH_PROFILE
+    else process.env.DS_BOT_DSH_PROFILE = previous
+    throw error
+  }
 }
 
 /** The profile of the first-run check, under the current DSH_HOME. */
 export function loadCheckProfile() {
   const dir = resolveProfileDir(CHECK_PROFILE)
   initProfile(dir, CHECK_BUNDLES)
+  // Check mode does not load DS Bot; never inherit a prior app skill scope.
+  delete process.env.DS_BOT_DSH_PROFILE
   return loadOwnBundles(dir, CHECK_BUNDLES)
 }
 

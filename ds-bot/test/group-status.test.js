@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { createRuntime } from '../index.js'
+const { createRuntime } = await import(process.env.BOT_RUNTIME_SOURCE ?? '../index.js')
 import { fakeContext } from './fake-ctx.js'
 import { ROOM_REPLY_TIMEOUT_MS } from '../src/host/constants.js'
 
@@ -102,6 +102,42 @@ async function openTurn(t, { agentOf, emit, tool }) {
   return read
 }
 
+test('real skill events reach the board without an assigned capability or member settings', async t => {
+  const host = await start()
+  t.after(host.stop)
+  host.emit('gb', 'tool/call', { callId: 'direct-skill', name: 'skill', arguments: JSON.stringify({ name: 'manual-direct' }) })
+  host.emit('gb', 'tool/ptc-dispatch-start', { rootCallId: 'program', parentCallId: 'program', subCallId: 'child-skill', name: 'skill', arguments: { name: 'manual-ptc' } })
+  host.emit('gb', 'tool/ptc-dispatch', { rootCallId: 'program', parentCallId: 'program', subCallId: 'child-skill', name: 'skill', arguments: { name: 'manual-ptc' }, isError: false, content: [] })
+  host.emit('gb', 'tool/ptc-dispatch', { rootCallId: 'program', parentCallId: 'program', subCallId: 'completed-skill', name: 'skill', arguments: { name: 'manual-completed' }, isError: false, content: [] })
+  host.emit('b', 'tool/call', { callId: 'private-skill', name: 'skill', arguments: JSON.stringify({ name: 'private-only' }) })
+  const reply = await host.call('taskflow-state', { room: 'r1' })
+  assert.equal(reply.ok, true)
+  assert.deepEqual(reply.value.members.b.skills, [])
+  assert.deepEqual(new Set(reply.value.members.b.usedSkills), new Set(['manual-direct', 'manual-ptc', 'manual-completed']))
+})
+
+test('group approvals retain the complete reason and exact command for review', async t => {
+  const host = await start()
+  t.after(host.stop)
+  const reason = 'Review the requested operation. '.repeat(80) + 'REVIEW-END'
+  const command = 'Write-Output "example"; '.repeat(80) + '# COMMAND-END'
+  const parameters = { command, paths: ['first.md', 'second.md'], content: 'Reviewed replacement text', headers: { Authorization: 'fixture-private-credential', 'X-API-Key': 'must-be-hidden' } }
+  host.emit('gb', 'tool/call', { callId: 'long-review', name: 'pwsh', arguments: JSON.stringify(parameters) })
+  const outcome = host.askApproval('gb', { callId: 'long-review', reason })
+  const [approval] = (await host.call('state', {})).value.work.approvals
+  try {
+    assert.equal(approval.reason.length, reason.length, 'the card must expose the complete reviewed reason')
+    assert.equal(approval.detail.code.length, command.length, 'the card must expose the exact command')
+    assert.ok(approval.reason.endsWith('REVIEW-END'))
+    assert.ok(approval.detail.code.endsWith('# COMMAND-END'))
+    assert.deepEqual(JSON.parse(approval.detail.parameters), { ...parameters, headers: { Authorization: '[REDACTED]', 'X-API-Key': '[REDACTED]' } })
+    assert.ok(!approval.detail.parameters.includes(parameters.headers.Authorization))
+  } finally {
+    await host.call('approval-answer', { id: approval.id, choice: 'reject' })
+  }
+  assert.equal(await outcome, 'rejected')
+})
+
 test('a group Session\'s approval waits in the team view, frees the round, and the late reply reaches the group', async (t) => {
   const host = await start()
   t.after(host.stop)
@@ -116,7 +152,9 @@ test('a group Session\'s approval waits in the team view, frees the round, and t
   assert.equal(value.activity.b, 'alert')
   const [approval] = value.work.approvals
   assert.deepEqual([approval.botId, approval.roomId, approval.tool, approval.answerable], ['b', 'r1', 'pwsh', true])
-  assert.deepEqual(approval.detail, { text: 'Copy the doc', code: 'Copy-Item a.md E:/docs' })
+  assert.equal(approval.detail.text, 'Copy the doc')
+  assert.equal(approval.detail.code, 'Copy-Item a.md E:/docs')
+  assert.deepEqual(JSON.parse(approval.detail.parameters), { command: 'Copy-Item a.md E:/docs', description: 'Copy the doc' })
   assert.equal(value.work.bots.b.roomId, 'r1')
   assert.equal(value.work.bots.b.tool, 'pwsh')
 
@@ -308,6 +346,8 @@ test('an approval asked inside a PTC program shows what that call does', async (
   await settle(() => result() !== undefined)
   const { value } = await host.call('state', {})
   const [approval] = value.work.approvals
-  assert.deepEqual(approval.detail, { text: 'Copy the doc', code: 'Copy-Item a.md E:/docs' })
+  assert.equal(approval.detail.text, 'Copy the doc')
+  assert.equal(approval.detail.code, 'Copy-Item a.md E:/docs')
+  assert.deepEqual(JSON.parse(approval.detail.parameters), { command: 'Copy-Item a.md E:/docs', description: 'Copy the doc' })
   assert.equal(value.work.bots.b.tool, 'pwsh')
 })
