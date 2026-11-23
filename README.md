@@ -42,6 +42,8 @@ DS Bot is a bot plugin for [DeepSeek Harness](https://github.com/deepseek-ai/dee
 
 ![Say one sentence to Chief, and it sets up the bots and the group chat](docs/images/team.png)
 
+![Task cards: you send the work to the group, the principal bot splits it across the bots](docs/images/task-card.png)
+
 ## Install
 
 **Desktop app (Windows, macOS, Linux)**
@@ -122,6 +124,12 @@ A group chat has its own memory. What you tell the group stays in the group: its
 For larger work, a group chat can run a goal: the admin aligns with you on what "done" means, splits the work into stages across members, and checks each stage against evidence before moving on.
 
 ![Group chat: the admin, Chief, hands the work to Writer and Coder](docs/images/group.png)
+
+### Task cards
+
+Task cards are how work gets done in a group. Send the group a request or a task, and the principal bot (the group's admin) first looks at which bots are in the group and what each of them can do, then splits the task into cards and hands them to the matching executor bots. Each card is one piece of work: the executor takes it, does it and submits the result, and the principal accepts it before it counts as done.
+
+A card shows who owns it, how far it has got and how long it has been sitting there. A card that goes quiet for five minutes gets a reminder; work that fails is retried once, and if it still fails its dependent cards are closed and the principal is alerted. You do not have to track who is doing what — the cards carry it.
 
 ### Capabilities
 
