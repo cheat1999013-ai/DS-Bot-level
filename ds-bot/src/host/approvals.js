@@ -35,7 +35,7 @@ export function install(rt) {
       botId,
       ...(owner ? { roomId: owner.roomId } : {}),
       tool: String(request.toolName ?? ''),
-      reason: String(request.reason ?? '').slice(0, 500),
+      reason: String(request.reason ?? ''),
       detail: rt.callDetail?.(sessionId, request.callId) ?? {},
       at: Date.now(),
     }

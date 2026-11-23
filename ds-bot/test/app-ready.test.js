@@ -24,6 +24,7 @@ const react = {
   createElement: (type, props, ...children) => ({ type, props: { ...props, children } }), Fragment: Symbol('Fragment'),
   useRef: initial => hooks.ref(initial), useEffect: (run, deps) => hooks.effect(run, deps), useLayoutEffect() {},
   useMemo: make => make(), useState: initial => [initial, () => {}], useId: () => 'id',
+  useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
   // The bundled Deep View widgets make a React context when their module loads.
   createContext: value => ({ Provider: 'Provider', value }), useContext: context => context.value,
 }

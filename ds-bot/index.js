@@ -1,7 +1,7 @@
 // DS Bot: a team of long-lived Bots on top of ordinary dsh root Sessions.
 // Every Bot is one root Session; the roster, rooms, and the bot-to-bot exchange log live
 // in one JSON file under DSH_HOME so they survive restarts without new Session event types.
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import * as diagnostics from './src/host/diagnostics.js'
 import * as store from './src/host/store.js'
 import * as models from './src/host/models.js'
@@ -22,6 +22,7 @@ import * as tools from './src/host/tools.js'
 import * as chatIndex from './src/host/chat-index.js'
 import * as groups from './src/host/groups.js'
 import * as goals from './src/host/goals.js'
+import * as taskflow from './src/host/taskflow.js'
 import * as approvals from './src/host/approvals.js'
 import * as resume from './src/host/resume.js'
 import * as memory from './src/host/memory.js'
@@ -34,8 +35,12 @@ import * as computer from './src/host/computer/index.js'
 import * as secrets from './src/host/secrets.js'
 import * as connectors from './src/host/connectors/index.js'
 import * as capabilities from './src/host/capabilities.js'
+import * as assignedSkills from './src/host/assigned-skills.js'
+import * as profiles from './src/host/profiles.js'
+import * as profileSkills from './src/host/profile-skills.js'
 import * as learning from './src/host/learning.js'
 import * as schedules from './src/host/schedules.js'
+import * as groupSchedules from './src/host/group-schedules.js'
 import * as usage from './src/host/usage.js'
 import * as update from './src/host/update.js'
 import * as dshUpdate from './src/host/dsh-update.js'
@@ -57,20 +62,25 @@ export const inject = ['llm', 'tools', 'systemPrompt', 'sessionController', 'ses
 // install. Listeners run and tools are listed in registration order, so this order holds:
 // usage meters model requests after every listener that rewrites them. privacy checks a
 // call before the hooks of tools do, so a closed call never reaches a card they show.
-const MODULES = [diagnostics, store, models, providers, permissions, turns, steer, handoffs, requests, delivery, roster, folders, privacy, agents, prompt, timeContext, tools, chatIndex, groups, goals, approvals, resume, memory, parts, images, avatarLibrary, secrets, connectors, capabilities, learning, schedules, browser, browserPlugins, computer, usage, update, dshUpdate, thinking, feed, im, channel, officeSkills, goalSkills, localAgents]
+const MODULES = [diagnostics, store, models, providers, permissions, turns, steer, handoffs, requests, delivery, roster, folders, privacy, agents, prompt, timeContext, tools, chatIndex, groups, goals, taskflow, approvals, resume, memory, parts, images, avatarLibrary, secrets, connectors, capabilities, assignedSkills, profiles, profileSkills, learning, schedules, groupSchedules, browser, browserPlugins, computer, usage, update, dshUpdate, thinking, feed, im, channel, officeSkills, goalSkills, localAgents]
 
 export function apply(ctx, config = {}) {
   createRuntime(ctx, config)
 }
 
 export function createRuntime(ctx, config = {}) {
+  if (config.taskflowHome != null && (typeof config.taskflowHome !== 'string' || !config.taskflowHome.trim() || !isAbsolute(config.taskflowHome))) {
+    throw new TypeError('taskflowHome must be a non-empty absolute directory path')
+  }
   const dshHome = folders.dshHomeOf(process.env.DSH_HOME)
   const home = config.home ?? join(dshHome, 'bot')
+  const taskflowHome = config.taskflowHome ?? join(config.home ?? dshHome, 'plugin-data', 'hermes-bot-taskflow')
   const rt = {
     ctx,
     config,
     dshHome,
     home,
+    taskflowHome,
     statePath: join(home, 'state.json'),
     // The Bot-only tools each module defines; tools.js registers them in each
     // Bot Session's own scope, never globally (see shareBotTools).

@@ -16,10 +16,10 @@ const PLUGIN = dirname(dirname(fileURLToPath(import.meta.url)))
 const OUTPUT = join(PLUGIN, 'client.js')
 const PLATFORM_MODULES = ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives']
 
-export async function bundleClient() {
+export async function bundleClient(pluginRoot = PLUGIN) {
   const result = await build({
     // Region comments name sources relative to the plugin, wherever the script runs from.
-    absWorkingDir: PLUGIN,
+    absWorkingDir: pluginRoot,
     entryPoints: ['src/client/index.js'],
     bundle: true,
     format: 'cjs',

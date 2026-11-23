@@ -169,7 +169,15 @@ MIT License, Copyright (c) 2026 xmanrui
   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
   SOFTWARE.
 
-No other third-party code is copied into this repository. At run time the
+dsh-bot-taskflow (local DSH taskflow project)
+MIT License, Copyright (c) 2026
+
+  - ds-bot/src/host/taskflow/scheduler.js and tools.js adapt the SQLite
+    scheduler and the sixteen model-facing tools from this project.
+  - ds-bot/test/scheduler.test.mjs and tools.test.mjs adapt its regression tests.
+  The MIT License text is reproduced above.
+
+At run time the
 plugin uses the @deepseek-ai/* packages of the DeepSeek Harness install it
 runs in; they are not bundled. The bundled ds-bot/office.js includes
 @xmldom/xmldom (https://github.com/xmldom/xmldom, MIT License, Copyright (c)

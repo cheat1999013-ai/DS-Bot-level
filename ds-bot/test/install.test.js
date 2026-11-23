@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { createRuntime } from '../index.js'
 import { fakeContext } from './fake-ctx.js'
+import { Knowledge } from '../src/host/taskflow/knowledge.js'
 
 let rt
 function start(state, { config = {}, services } = {}) {
@@ -60,8 +61,13 @@ test('apply registers listeners and effects in a fixed order', (t) => {
     'on system-prompt/assemble',
     'on session/event',
     'effect ds-bot: chat index',
+    'effect ds-bot: formal goal submissions',
     'effect ds-bot: group step lines',
     'on llm/stream',
+    'on system-prompt/assemble',
+    'effect ds-bot: group knowledge skills',
+    'effect ds-bot: active group task monitor',
+    'effect ds-bot: taskflow ledgers',
     'on approval/request (prepend)',
     'on agent/inbox/discarded',
     'on session/event',
@@ -92,10 +98,16 @@ test('apply registers listeners and effects in a fixed order', (t) => {
     'effect ds-bot: connectors',
     'on agent/created',
     'effect ds-bot: capabilities',
+    'on session/event',
+    'on agent/pre-step',
+    'on tools/pre-execute',
+    'effect ds-bot: assigned skill preparation',
     'on agent/status',
     'effect ds-bot: learning',
     'on tools/pre-execute',
     'on tools/execute',
+    'effect ds-bot: scheduled group task queue',
+    'on llm/stream',
     'on agent/created',
     'on agent/disposed',
     'on user-questions/request (prepend)',
@@ -122,6 +134,76 @@ test('apply registers listeners and effects in a fixed order', (t) => {
     'effect ds-bot: load state',
     'effect ds-bot: local agents',
   ])
+})
+
+test('an independent taskflowHome routes both ledgers and insight files across runtime restart', async (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'ds-bot-storage-'))
+  const dataHome = join(base, 'area skill')
+  const env = start(undefined, { config: { taskflowHome: dataHome } })
+  let second
+  t.after(async () => {
+    await second?.dispose()
+    await env.stop()
+    rmSync(base, { recursive: true, force: true, maxRetries: 5 })
+  })
+  assert.equal(env.rt.taskflowHome, dataHome)
+  assert.notEqual(env.rt.home, dataHome)
+  assert.equal((await env.call('taskflow-state', {})).ok, true)
+  for (const name of ['coordination.sqlite', 'knowledge.sqlite']) assert.equal(existsSync(join(dataHome, name)), true)
+  assert.equal(existsSync(join(env.rt.home, 'plugin-data', 'hermes-bot-taskflow')), false)
+  await env.ctx.dispose()
+  let library = new Knowledge(join(dataHome, 'knowledge.sqlite'))
+  let publication
+  try {
+    library.addInsight({ room: 'fixture-group', planId: 'storage-restart', title: 'Storage fixture', text: 'Preserve this isolated insight across restart.' })
+    publication = library.insightPublication('fixture-group', 'storage-restart')
+    assert.ok(publication.path.startsWith(join(dataHome, 'library')))
+  } finally { library.close() }
+  second = fakeContext()
+  const reopened = createRuntime(second, { home: env.rt.home, taskflowHome: dataHome })
+  await reopened.taskflowView({})
+  library = new Knowledge(join(dataHome, 'knowledge.sqlite'), { readOnly: true })
+  try {
+    const restored = library.insightPublication('fixture-group', 'storage-restart')
+    assert.equal(restored.digest, publication.digest)
+    assert.match(readFileSync(restored.path, 'utf8'), /Preserve this isolated insight/)
+  } finally { library.close() }
+  assert.equal(existsSync(join(env.rt.home, 'plugin-data', 'hermes-bot-taskflow')), false)
+})
+
+test('an unconfigured taskflowHome preserves the existing team-home default', async (t) => {
+  const env = start()
+  t.after(env.stop)
+  assert.equal(env.rt.taskflowHome, join(env.rt.home, 'plugin-data', 'hermes-bot-taskflow'))
+  assert.equal((await env.call('taskflow-state', {})).ok, true)
+  assert.equal(existsSync(join(env.rt.taskflowHome, 'coordination.sqlite')), true)
+})
+
+test('an invalid explicit taskflowHome fails before registering effects instead of using the default', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'ds-bot-storage-invalid-'))
+  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5 }))
+  for (const taskflowHome of ['', '   ', 'relative/area skill', false, 42]) {
+    const ctx = fakeContext()
+    try {
+      assert.throws(() => createRuntime(ctx, { home, taskflowHome }), /taskflowHome.*absolute/)
+      assert.deepEqual(ctx.calls, [])
+    } finally { await ctx.dispose() }
+  }
+  assert.equal(existsSync(join(home, 'plugin-data')), false)
+})
+
+test('an unavailable explicit taskflowHome reports its filesystem error without falling back', async (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'ds-bot-storage-unavailable-'))
+  const dataHome = join(base, 'area skill')
+  writeFileSync(dataHome, 'Keep this existing file')
+  const env = start(undefined, { config: { taskflowHome: dataHome } })
+  t.after(async () => {
+    await env.stop()
+    rmSync(base, { recursive: true, force: true, maxRetries: 5 })
+  })
+  await assert.rejects(env.rt.taskflowView({}), error => error.code === 'EEXIST')
+  assert.equal(readFileSync(dataHome, 'utf8'), 'Keep this existing file')
+  assert.equal(existsSync(join(env.rt.home, 'plugin-data', 'hermes-bot-taskflow')), false)
 })
 
 test('the client channel answers from the saved state', async (t) => {

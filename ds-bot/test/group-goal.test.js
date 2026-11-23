@@ -3,7 +3,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { createRuntime } from '../index.js'
+import { setTimeout as realDelay } from 'node:timers/promises'
+const { createRuntime } = await import(process.env.BOT_RUNTIME_SOURCE ?? '../index.js')
 import { fakeContext } from './fake-ctx.js'
 import { ROOM_WORK_GRACE_MS } from '../src/host/constants.js'
 
@@ -117,7 +118,8 @@ async function start(t, room, services, extraRooms) {
 
 const settle = async (check) => {
   const until = Date.now() + 3000
-  while (!check() && Date.now() < until) await new Promise(resolve => setImmediate(resolve))
+  // Let Windows close synchronous state readers before the writer replaces the file.
+  while (!check() && Date.now() < until) await realDelay(5)
   assert.ok(check(), 'condition not reached')
 }
 const text = message => message.content.map(block => block.text ?? '').join('\n')
@@ -169,6 +171,39 @@ test('a goal starts, passes its stages, and completes', async (t) => {
   assert.equal(await host.tool('group_goal', { action: 'complete', evidence: 'e' }, 'ga'), 'summary is required for complete.')
   assert.match(await host.tool('group_goal', { action: 'complete', evidence: 'all green', summary: 'shipped' }, 'ga'), /Complete\. Tell the user what was delivered\./)
   assert.equal(goal(host).status, 'complete')
+})
+
+test('project completion sends native reflection requests for the previously completed stage', async (t) => {
+  const host = await start(t)
+  await startGoal(host)
+  const run = async (name, args, session = 'ga') => JSON.parse(await host.tool(name, args, session))
+  const { plan } = await run('taskflow_plan', { goal: 'Draft stage', children: [
+    { id: 'draft', member: 'Writer', goal: 'Write the draft', dependencies: [] },
+  ] })
+  const planId = plan.plan_id
+  assert.equal((await run('taskflow_dispatch', { planId })).success, true)
+  assert.equal((await run('taskflow_submit', { planId, cardId: 'draft', result: 'Reviewed draft' }, 'gb')).success, true)
+  assert.equal((await run('taskflow_accept', { planId, cardId: 'draft' })).success, true)
+  assert.equal((await run('taskflow_finish', { planId })).next, 'group_goal')
+  const requests = () => host.agentOf('r1').calls.filter(call => call.source?.taskflowEvent?.event === 'notice' && call.source.taskflowEvent.planId === planId)
+  await host.tool('group_goal', { action: 'pass', evidence: 'reviewed' }, 'ga')
+  assert.equal(requests().length, 0)
+  await host.tool('group_goal', { action: 'pass', evidence: 'checked' }, 'ga')
+  assert.equal(requests().length, 0)
+  const complete = await host.tool('group_goal', { action: 'complete', evidence: 'verified whole project', summary: 'shipped' }, 'ga')
+  assert.ok(complete.includes(planId))
+  assert.equal(requests().length, 1)
+  assert.equal(requests()[0].source.kind, 'taskflow')
+  assert.equal(requests()[0].source.taskflowEvent.to.id, 'b')
+  const before = host.agentOf('gb').calls.length
+  host.round('reflection-request', requests()[0])
+  await settle(() => host.agentOf('gb').calls.length > before)
+  assert.match(text(host.begin('gb')), /项目已通过总验收.*taskflow_sleep_note/)
+  const note = '## 做了什么\n核对草稿。\n\n## 为什么这么做\n需要验证项目总交付。\n\n## 要在下次任务中做的更好我需要什么\n沿用逐项核验。'
+  const savedNote = await run('taskflow_sleep_note', { planId, cardId: 'draft', text: note }, 'gb')
+  assert.equal(savedNote.note.text, note)
+  assert.equal(savedNote.notification.sent, true)
+  host.finish('gb', '[PASS]')
 })
 
 test('rework sends the current stage back; revise keeps passed stages and a matching task', async (t) => {
@@ -271,7 +306,9 @@ test('the admin and member prompts carry the goal block', async (t) => {
   host.finish('gb', 'draft written')
   await settle(() => result() !== undefined)
 
-  const again = host.round('c2', host.say('@Tester hello'))
+  host.takeGoal()
+  await host.tool('post_to_group', { group: 'Ops', message: '@Tester hello' }, 'a')
+  const again = host.round('c2', host.takePost())
   await settle(() => host.agentOf('gc').calls.length === 1)
   assert.match(text(host.begin('gc')), /You have no task in this stage\./)
   host.finish('gc', '[PASS]')
@@ -371,7 +408,9 @@ test('a paused goal and a room at work do not get a goal check', async (t) => {
   const host = await start(t)
   await startGoal(host)
   assert.equal((await host.call('goal-control', { roomId: 'r1', goalId: goal(host).id, action: 'pause' })).ok, true)
-  assert.match(await host.tool('post_to_group', { group: 'Ops', message: 'checking in' }, 'b'), /Nobody answers it/)
+  assert.match(await host.tool('post_to_group', { group: 'Ops', message: 'checking in' }, 'b'), /taskflow_submit/)
+  assert.deepEqual(host.agentOf('r1').calls, [])
+  await host.rt.postToRoom(host.rt.roomOf('r1'), host.rt.botOf('a'), 'checking in', { progress: true })
   const paused = host.round('c1', host.takePost())
   await settle(() => paused() !== undefined)
   assert.equal(host.takeGoal(), undefined)
@@ -384,26 +423,41 @@ test('a paused goal and a room at work do not get a goal check', async (t) => {
   await settle(() => wake() !== undefined)
   host.agentOf('r1').calls.length = 0
   host.emit('gb', 'turn/start', { turn: 9 })
-  assert.match(await host.tool('post_to_group', { group: 'Ops', message: 'more news' }, 'c'), /Nobody answers it/)
+  assert.match(await host.tool('post_to_group', { group: 'Ops', message: 'more news' }, 'c'), /taskflow_submit/)
+  await host.rt.postToRoom(host.rt.roomOf('r1'), host.rt.botOf('a'), 'more news', { progress: true })
   const busy = host.round('c3', host.takePost())
   await settle(() => busy() !== undefined)
   assert.equal(host.takeGoal(), undefined)
 })
 
-test('the goal tracks tasks as the admin calls and members answer', async (t) => {
+test('the goal tracks formal assignment and a persisted task submission', async (t) => {
   const host = await start(t)
   await startGoal(host)
   const writerTask = () => goal(host).stages[0].tasks.find(task => task.botId === 'b')
   const result = host.round('c1', host.say('@Chief go'))
   await settle(() => host.agentOf('ga').calls.length === 1)
   host.begin('ga')
-  host.finish('ga', '@Writer write the draft')
+  const planned = JSON.parse(await host.tool('taskflow_plan', { goal: 'write the draft',
+    children: [{ id: 'draft', member: 'Writer', goal: 'write the draft', dependencies: [] }] }, 'ga'))
+  const planId = planned.plan.plan_id
+  await host.tool('taskflow_dispatch', { planId }, 'ga')
+  host.finish('ga', '任务已派发。')
   await settle(() => host.agentOf('gb').calls.length === 1)
-  await settle(() => writerTask().status === 'working')
+  assert.equal(writerTask().status, 'working')
   host.begin('gb')
-  host.finish('gb', 'draft written, see out.md')
+  const submitted = JSON.parse(await host.tool('taskflow_submit', { planId, cardId: 'draft', result: 'draft written, see out.md' }, 'gb'))
+  assert.equal(submitted.observed.status, 'settled')
+  host.finish('gb', '[PASS]')
   await settle(() => writerTask().status === 'reported')
+  await settle(() => host.agentOf('ga').calls.length === 2)
+  host.begin('ga')
+  const results = JSON.parse(await host.tool('taskflow_results', { planId }, 'ga'))
+  assert.equal(results.results[0].result.text, 'draft written, see out.md')
+  await host.tool('taskflow_accept', { planId, cardId: 'draft' }, 'ga')
+  await host.tool('taskflow_finish', { planId }, 'ga')
+  host.finish('ga', '正式结果已验收。')
   await settle(() => result() !== undefined)
+  assert.equal(logLines(host).some(row => row.botId === 'b' && row.kind === undefined), false)
 })
 
 test('a failed model call and a user stop put the task back with a note', async (t) => {
@@ -564,20 +618,24 @@ for (const [endpoint, body] of [['stop-room-work', { roomId: 'r1' }], ['stop-mem
   })
 }
 
-test('a batch member that finishes first is reported while its peer still works', async (t) => {
+test('a formal submit reports one goal task while its peer still works', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const host = await start(t)
-  await startGoal(host, {
-    stages: [
-      { title: 'Draft', acceptance: 'draft reviewed', tasks: [{ bot: 'Writer', task: 'write the draft' }, { bot: 'Tester', task: 'check the draft' }] },
-      { title: 'Check', acceptance: 'checks pass', tasks: [{ bot: 'Tester', task: 'run the checks' }] },
-    ],
-  })
+  await startGoal(host, { stages: [
+    { title: 'Draft', acceptance: 'draft reviewed', tasks: [{ bot: 'Writer', task: 'write the draft' }, { bot: 'Tester', task: 'check the draft' }] },
+    { title: 'Check', acceptance: 'checks pass', tasks: [{ bot: 'Tester', task: 'run the checks' }] },
+  ] })
   const taskOf = botId => goal(host).stages[0].tasks.find(task => task.botId === botId)
   const first = host.round('c1', host.say('@Chief go'))
   await settle(() => host.agentOf('ga').calls.length === 1)
   host.begin('ga')
-  host.finish('ga', '@Writer @Tester start the draft')
+  const planned = JSON.parse(await host.tool('taskflow_plan', { goal: 'prepare the draft', children: [
+    { id: 'draft', member: 'Writer', goal: 'write the draft', dependencies: [] },
+    { id: 'check', member: 'Tester', goal: 'check the draft', dependencies: [] },
+  ] }, 'ga'))
+  const planId = planned.plan.plan_id
+  await host.tool('taskflow_dispatch', { planId }, 'ga')
+  host.finish('ga', '任务已派发。')
   await settle(() => host.agentOf('gb').calls.length === 1 && host.agentOf('gc').calls.length === 1)
   host.begin('gb')
   host.emit('gb', 'tool/call', { callId: 'k1', name: 'pwsh', arguments: '{}' })
@@ -585,11 +643,22 @@ test('a batch member that finishes first is reported while its peer still works'
   host.emit('gc', 'tool/call', { callId: 'k2', name: 'pwsh', arguments: '{}' })
   t.mock.timers.tick(ROOM_WORK_GRACE_MS * 2)
   await settle(() => first() !== undefined)
-  await settle(() => taskOf('b').status === 'working' && taskOf('c').status === 'working')
-  // Writer posts its result while Tester is still at work: reported at once.
-  host.finish('gb', 'draft written, see out.md')
+  assert.equal(taskOf('b').status, 'working')
+  assert.equal(taskOf('c').status, 'working')
+  host.emit('gb', 'tool/result', { callId: 'k1' })
+  await host.tool('taskflow_submit', { planId, cardId: 'draft', result: 'draft written, see out.md' }, 'gb')
+  host.finish('gb', '[PASS]')
+  await settle(() => taskOf('b').status === 'reported' || host.agentOf('r1').calls.length > 0)
+  if (taskOf('b').status !== 'reported') {
+    host.takeGoal()
+    const post = host.takePost()
+    assert.equal(post.source.taskflowEvent.event, 'submitted')
+    host.round('submitted', post)
+  }
   await settle(() => taskOf('b').status === 'reported')
   assert.equal(taskOf('c').status, 'working')
+  assert.equal(logLines(host).filter(row => row.taskflowEvent?.event === 'submitted' && row.taskflowEvent.from?.id === 'b' && row.taskflowEvent.to?.id === 'a').length, 1)
+  assert.equal(logLines(host).some(row => row.botId === 'b' && row.kind === undefined), false)
 })
 
 test('a member call while the goal waits brings it back', async (t) => {
@@ -651,13 +720,11 @@ test('a draft queued with another post still calls the admin on its note', async
   // The draft lands first; the user's own message, queued second, opens the round.
   host.emit('r1', 'user/message', { content: draft.content, source: draft.source })
   const result = host.round('c1', host.say('@Tester look at this'))
-  await settle(() => host.agentOf('gc').calls.length === 1)
   await settle(() => host.agentOf('ga').calls.length === 1)
   assert.match(text(host.agentOf('ga').calls[0]), /the user wants to set a goal for this group/)
   host.begin('ga')
   host.finish('ga', 'Aligning it.')
-  host.begin('gc')
-  host.finish('gc', '[PASS]')
+  assert.deepEqual(host.agentOf('gc').calls, [])
   await settle(() => result() !== undefined)
   assert.ok(logLines(host).some(line => line.who === 'User' && line.text === 'Build the site'))
 })

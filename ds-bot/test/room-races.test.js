@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 import { createRuntime } from '../index.js'
 import { fakeContext } from './fake-ctx.js'
@@ -30,7 +30,9 @@ const TEAM = {
 async function start(team = TEAM) {
   // The project folder sits beside the team's data, which no Bot may work in.
   // The native realpath: on Windows the JS one keeps 8.3 short names.
-  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'ds-bot-room-races-')))
+  const tempRoot = fileURLToPath(new URL('../.tmp-test/', import.meta.url))
+  mkdirSync(tempRoot, { recursive: true })
+  const root = realpathSync.native(mkdtempSync(join(tempRoot, 'ds-bot-room-races-')))
   const home = join(root, 'bot')
   const folder = join(root, 'project')
   for (const dir of [home, folder]) mkdirSync(dir)
@@ -101,7 +103,7 @@ test('a group left with one Bot by a deletion while it is made is not made', asy
   assert.ok(archived.includes('s1'))
 })
 
-test('a change that waits for its folder keeps the member another change added meanwhile', async (t) => {
+test('overlapping additions keep both members in request order while the first waits for its folder', async (t) => {
   const { rt, folder, saved, stop } = await start()
   t.after(stop)
   const moving = rt.updateRoom('r1', { add: ['c'], workDir: folder })
@@ -109,7 +111,7 @@ test('a change that waits for its folder keeps the member another change added m
   const [moved, added] = await Promise.all([moving, adding])
   assert.deepEqual(added.changes, ['added Tester'])
   assert.deepEqual(moved.changes, ['added Coder', `every member now works in ${folder} here`])
-  assert.deepEqual(saved().rooms.r1.members, ['a', 'b', 'd', 'c'])
+  assert.deepEqual(saved().rooms.r1.members, ['a', 'b', 'c', 'd'])
 })
 
 test('a Bot deleted while a change waits for its folder is not added back', async (t) => {
@@ -139,6 +141,26 @@ test('a group left with one Bot can still change its settings, but not lose anot
   assert.deepEqual((await rt.updateRoom('r1', { notice: 'Ship on Friday' })).changes, ['updated the notice'])
   assert.deepEqual((await rt.updateRoom('r1', { add: ['c'] })).changes, ['added Coder'])
   await assert.rejects(rt.updateRoom('r1', { remove: ['c'] }), /A group chat needs at least two Bots/)
+})
+
+test('overlapping removals serialize stopping and keep roster and taskflow consistent', async t => {
+  const team = { ...TEAM, rooms: { r1: { ...TEAM.rooms.r1, members: ['a', 'b', 'c', 'd'] } } }
+  const { rt, stop } = await start(team)
+  t.after(stop)
+  let release
+  let entered
+  const stopped = new Promise(resolve => { entered = resolve })
+  const held = new Promise(resolve => { release = resolve })
+  const failed = []
+  rt.stopMemberWork = async (_room, botId) => { if (botId === 'b') { entered(); await held } }
+  rt.taskflowMemberLeft = async (_room, botId) => { failed.push(botId); return [] }
+  const first = rt.updateRoom('r1', { remove: ['b'] })
+  await stopped
+  const second = rt.updateRoom('r1', { remove: ['c'] })
+  release()
+  await Promise.all([first, second])
+  assert.deepEqual(rt.state.rooms.r1.members, ['a', 'd'])
+  assert.deepEqual(failed, ['b', 'c'])
 })
 
 test('a team saved with a deleted Bot in a group, even as its admin, loads without it', async (t) => {

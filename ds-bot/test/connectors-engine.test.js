@@ -760,10 +760,12 @@ test('gateway keeps the entry path and merges queries', async (t) => {
 
 test('gateway destroys the upstream stream when the client disconnects', async (t) => {
   let upstreamDestroyed = false
+  let resolveClosed
+  const closed = new Promise(resolve => { resolveClosed = resolve })
   const upstream = createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream' })
     res.write('event: message\ndata: {}\n\n')
-    res.on('close', () => { upstreamDestroyed = true })
+    res.on('close', () => { upstreamDestroyed = true; resolveClosed() })
     // never ends on its own
   })
   const port = await listen(upstream)
@@ -776,7 +778,9 @@ test('gateway destroys the upstream stream when the client disconnects', async (
   const res = await fetch(gw.urlFor('svc'), { headers: { Authorization: `Bearer ${gw.nonce}` }, signal: controller.signal })
   controller.abort()
   await res.body?.cancel().catch(() => {})
-  await new Promise(resolve => setTimeout(resolve, 50))
+  let timeout
+  await Promise.race([closed, new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('upstream did not close')), 3000) })])
+    .finally(() => clearTimeout(timeout))
   assert.equal(upstreamDestroyed, true)
 })
 

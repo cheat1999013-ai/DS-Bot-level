@@ -227,6 +227,14 @@ export async function preparePrimaryRuntime(options) {
   mkdirSync(paths.downloads, { recursive: true })
   if (runtimeReusable(paths.runtime, manifest)) {
     console.log(`primary-runtime: payload in ${paths.runtime} is current (digest ${manifest.payloadDigest.slice(0, 12)}…)`)
+    const target = join(paths.runtime, 'primary-runtime', 'runtime.json')
+    if (JSON.parse(readFileSync(target, 'utf8')).desktopVersion !== manifest.desktopVersion) {
+      const temporary = `${target}.${randomUUID()}.tmp`
+      try {
+        writeFileSync(temporary, `${JSON.stringify(manifest, undefined, 2)}\n`)
+        renameSync(temporary, target)
+      } finally { rmSync(temporary, { force: true }) }
+    }
   } else {
     const staging = mkdtempSync(join(tmpdir(), 'ds-bot-primary-'))
     try {

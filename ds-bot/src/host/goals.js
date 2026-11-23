@@ -774,6 +774,14 @@ export function install(rt) {
         case 'complete':
           result = completeGoal(room, args, self)
           next = 'Complete. Tell the user what was delivered.'
+          post = async () => {
+            try {
+              const plans = await rt.taskflowRequestGoalReflections?.(room.id, result.goal.id)
+              if (plans?.length) next += ` Review project reflections with taskflow_sleep_pending using each explicit planId: ${plans.join(', ')}. Consolidate when the notes are ready.`
+            } catch (error) {
+              rt.warn('ds-bot: project reflection requests failed: %s', error?.message ?? error)
+            }
+          }
           break
         case 'pause':
           result = pauseGoal(room, self)

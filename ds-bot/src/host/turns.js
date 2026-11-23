@@ -6,6 +6,8 @@ import { randomUUID } from 'node:crypto'
 import { carrierKeyOf } from '@deepseek-ai/dsh-scope'
 import { HANDOFF_ACK, MESSAGE_INLINE_MAX, REFERENCE_KIND, REPLY_KIND, SOURCE_KIND, STEER_CUT } from './constants.js'
 import { cleanText } from './diagnostics.js'
+import { taskMessageOf } from '../shared/taskflow-message.js'
+const isTeamSource = source => source?.kind === SOURCE_KIND || source?.kind === 'taskflow' && !!taskMessageOf({ source })
 import { absoluteLinks } from './links.js'
 import { splitRef, textOf } from './text.js'
 import { viaOf } from '../shared/im-platforms.js'
@@ -134,6 +136,7 @@ export function install(rt) {
       ...(keeps && info.roomId ? { roomId: info.roomId } : {}),
       ...(keeps && info.exchangeId ? { exchangeId: info.exchangeId } : {}),
       ...(info?.work ? { work: info.work } : {}),
+      ...(info?.kind === 'taskflow' ? { taskflowEvent: info.taskflowEvent } : {}),
       ...(keeps && info.audience ? { audience: info.audience } : {}),
       ...(keeps && info.askedBy ? { askedBy: info.askedBy } : {}),
       ...(keeps && info.senderRoomId ? { fromRoomId: info.senderRoomId } : {}),
@@ -316,6 +319,14 @@ export function install(rt) {
     if (name !== undefined) setActivity(id, name === 'ask_user' || name === 'show_view' ? undefined : activityOf(name))
     else if (entry.turn !== undefined) setActivity(id, 'thinking')
   }
+  const noteSkill = (sessionId, name, input, at) => {
+    const owner = rt.groupOwners.get(sessionId)
+    if (!owner || name !== 'skill') return
+    let args
+    try { args = typeof input === 'string' && input.length <= 4096 ? JSON.parse(input) : input }
+    catch { return }
+    rt.noteTaskflowSkill?.(owner.roomId, owner.botId, args?.name, at)
+  }
   const startCall = (id, entry, callId, name, args) => {
     if (typeof callId === 'string') (entry.calls ??= new Map()).set(callId, { name, args })
     showCall(id, entry)
@@ -385,7 +396,7 @@ export function install(rt) {
         held.push(...[...(agent?.inbox?.nextStep ?? []), ...(agent?.inbox?.nextTurn ?? [])].map(message => message.source))
       }
       for (const source of held) {
-        if (source?.kind === SOURCE_KIND && expectsReply(source) && !answersUser(source)) waiting.set(source.exchangeId, [id, source])
+        if (isTeamSource(source) && expectsReply(source) && !answersUser(source)) waiting.set(source.exchangeId, [id, source])
       }
       live.delete(id)
       setActivity(id, undefined)
@@ -532,7 +543,10 @@ export function install(rt) {
     const first = keys => keys.map(key => args?.[key]).find(value => typeof value === 'string' && value.trim() !== '')
     const text = first(['description', 'justification'])
     const code = first(['command', 'cmd', 'file_path', 'path', 'url', 'query'])
-    return { ...(text ? { text: text.trim().slice(0, 300) } : {}), ...(code ? { code: code.trim().slice(0, 400) } : {}) }
+    const sensitive = /^(?:authorization|proxy-authorization|cookie|set-cookie|password|passwd|secret|token|(?:x[-_])?api[-_]?key|access[-_]?token|refresh[-_]?token|client[-_]?secret|private[-_]?key)$/i
+    const parameters = Object.keys(args ?? {}).length ? JSON.stringify(args,
+      (key, value) => sensitive.test(key) ? '[REDACTED]' : value, 2) : undefined
+    return { ...(text ? { text: text.trim() } : {}), ...(code ? { code } : {}), ...(parameters ? { parameters } : {}) }
   }
 
   // Where a Session speaks, for the diagnostics log.
@@ -644,6 +658,7 @@ export function install(rt) {
       case 'tool/call': {
         const name = String(event.data?.name ?? '')
         startCall(id, entry, event.data?.callId, name, String(event.data?.arguments ?? ''))
+        noteSkill(id, name, event.data?.arguments, event.time ?? Date.now())
         // A program is as quick as the tools it runs, so its sub-calls decide.
         if (name !== PROGRAM_TOOL) {
           entry.toolCount = (entry.toolCount ?? 0) + 1
@@ -654,11 +669,15 @@ export function install(rt) {
       case 'tool/ptc-dispatch-start': {
         const name = String(event.data?.name ?? '')
         startCall(id, entry, event.data?.subCallId, name, JSON.stringify(event.data?.arguments ?? {}))
+        noteSkill(id, name, event.data?.arguments, event.time ?? Date.now())
         entry.toolCount = (entry.toolCount ?? 0) + 1
         if (rt.groupOwners.has(id)) rt.workRoomTurn?.(id, name)
         break
       }
       case 'tool/ptc-dispatch':
+        if (!entry.calls?.has(event.data?.subCallId)) {
+          noteSkill(id, String(event.data?.name ?? ''), event.data?.arguments, event.time ?? Date.now())
+        }
         endCall(id, entry, event.data?.subCallId)
         break
       case 'tool/result':
@@ -715,6 +734,10 @@ export function install(rt) {
         break
       case 'user/message': {
         const source = event.data?.source
+        if (source?.kind === 'skill-invocation') {
+          const owner = rt.groupOwners.get(id)
+          if (owner) rt.noteTaskflowSkill?.(owner.roomId, owner.botId, source.name, event.time ?? Date.now())
+        }
         if (source?.kind === 'subagent-settled' || source?.kind === 'agent-message') {
           if (typeof source.senderSessionId === 'string') {
             noteSubagentEnd(source.senderSessionId)
@@ -725,11 +748,11 @@ export function install(rt) {
             void rt.resolveAgent(id).then(agent => agent?.cancel({ kind: 'hook', reason: 'ds-bot/stopped' })).catch(() => {})
             break
           }
-        } else if (source?.kind === 'user' || source?.kind === SOURCE_KIND) {
+        } else if (source?.kind === 'user' || isTeamSource(source)) {
           stoppedSubagentParents.delete(id)
         }
         // A result that came back counts as taken once a turn reads it.
-        if (source?.kind === SOURCE_KIND && source.work !== undefined && source.replyTo !== undefined) rt.takenWork?.(source.work, source.replyTo)
+        if (isTeamSource(source) && source.work !== undefined && source.replyTo !== undefined) rt.takenWork?.(source.work, source.replyTo)
         // A message that shares a step with a bare handoff package is what the turn
         // answers, so the turn is not a hidden acknowledgement.
         const bare = info => info?.handoff === true && info.resume !== true
@@ -738,10 +761,10 @@ export function install(rt) {
         // still claims it as today, a later one only joins it.
         const opened = entry.opened === true
         if (entry.turn !== undefined && !bare(source)
-          && (source?.kind === 'user' || source?.kind === REPLY_KIND || source?.kind === 'schedule' || source?.kind === SOURCE_KIND)) {
+          && (source?.kind === 'user' || source?.kind === REPLY_KIND || source?.kind === 'schedule' || isTeamSource(source))) {
           entry.opened = true
         }
-        if (entry.turn !== undefined && (source?.kind === 'user' || source?.kind === REPLY_KIND || source?.kind === SOURCE_KIND)) {
+        if (entry.turn !== undefined && (source?.kind === 'user' || source?.kind === REPLY_KIND || isTeamSource(source))) {
           if (bare(source)) {
             if (entry.answers) break
           } else {
@@ -752,7 +775,7 @@ export function install(rt) {
             }
           }
         }
-        if (source?.kind === SOURCE_KIND && source.role === 'post' && rt.roomOf(id)) {
+        if (isTeamSource(source) && source.role === 'post' && rt.roomOf(id)) {
           // A long post comes as a file (attachLong), which stays with its line.
           const files = (Array.isArray(event.data.content) ? event.data.content : []).filter(block => block?.type === 'file' && block.attachment !== undefined).map(block => block.attachment)
           queueRoomMessage(rt.roomOf(id).id, {
@@ -767,6 +790,8 @@ export function install(rt) {
             ...(source.sub ? { sub: source.sub } : {}),
             ...(source.late ? { late: true } : {}),
             ...(source.progress ? { progress: true } : {}),
+            ...(source.taskflowEvent ? { taskflowEvent: source.taskflowEvent } : {}),
+            ...(source.kind === 'taskflow' ? { taskSchemaVersion: source.version } : {}),
             ...(source.quiet ? { quiet: true } : {}),
             ...(source.failed ? { failed: source.failed } : {}),
             ...(source.resumed ? { resumed: true } : {}),
@@ -780,9 +805,9 @@ export function install(rt) {
             ...(source.logged !== undefined ? { logged: source.logged } : {}),
             ...(source.called ? { called: true } : {}),
           })
-        } else if (source?.kind === SOURCE_KIND && source.role === 'kickoff' && rt.roomOf(id)) {
+        } else if (isTeamSource(source) && source.role === 'kickoff' && rt.roomOf(id)) {
           queueRoomMessage(rt.roomOf(id).id, { text: '', kickoff: true })
-        } else if (source?.kind === SOURCE_KIND && source.role === 'goal' && rt.roomOf(id)) {
+        } else if (isTeamSource(source) && source.role === 'goal' && rt.roomOf(id)) {
           // A goal message — the user's draft ask, an idle goal check, a resume —
           // opens a round of its own; the draft ask is the user's line.
           queueRoomMessage(rt.roomOf(id).id, {
@@ -790,7 +815,7 @@ export function install(rt) {
             ...(source.goal !== undefined ? { goal: source.goal } : {}),
             ...(source.goalId !== undefined ? { goalId: source.goalId } : {}),
           })
-        } else if (source?.kind === SOURCE_KIND) {
+        } else if (isTeamSource(source)) {
           if (entry.turn === undefined) {
             entry.pending = source
             entry.pendingText = textOf(event.data.content).replace(/^\[(?:[^\r\n]*\]\r?\n|[^\]\r\n]*\])/, '')
@@ -914,6 +939,7 @@ export function install(rt) {
         const suppressedSubagent = entry.suppressedSubagent === true
         // A turn stopped for a switch goes on in the next part, which answers instead.
         const switched = entry.switched === true
+        const watched = entry.turn !== undefined
         entry.turn = undefined
         entry.info = undefined
         entry.texts = []
@@ -973,9 +999,19 @@ export function install(rt) {
         const promisedOnly = !wroteCall && failure === undefined && reason?.kind === 'completed'
           && toolCount === 0 && lastCalled !== true && info?.role === 'room'
           && promisesWork(lastText) && !rt.callsRoomMember?.(id, info, lastText)
-        const retry = (wroteCall || promisedOnly) && info?.retried !== true && !(info?.role === 'room' && stoppedRoomTurns.has(info.exchangeId))
+        const taskPending = watched && failure === undefined && ['completed', 'max-tokens'].includes(reason?.kind)
+          && !stoppedSubagentParents.has(id) && !(subagentsByParent.get(id)?.size)
+          && !(info?.work && rt.waitsWork?.(rt.workOf?.(info)))
+          && !(info?.role === 'room' && stoppedRoomTurns.has(info.exchangeId))
+          ? rt.taskflowContinuation?.(id) : undefined
+        const retry = ((wroteCall || promisedOnly) && info?.retried !== true || taskPending && !taskPending.exhausted)
+          && !(info?.role === 'room' && stoppedRoomTurns.has(info.exchangeId))
         if (retry) {
-          if (promisedOnly) {
+          if (taskPending && !taskPending.exhausted) {
+            roomWaiters.get(info?.exchangeId)?.touch()
+            void retryTurn(id, info, 'the formal task still has an unfinished obligation', taskPending.text)
+              .catch(error => rt.warn('ds-bot: task continuation failed: %s', error))
+          } else if (promisedOnly) {
             const opening = stripWrittenCalls(lastText ?? '')
             if (opening !== '') {
               rememberStopped(promisedOpenings, info.exchangeId)
@@ -985,6 +1021,18 @@ export function install(rt) {
             void retryPromisedWork(id, info).catch(error => rt.warn('ds-bot: asking %s to run its promised work failed: %s', id, error))
           } else {
             void retryWrittenCall(id, info).catch(error => rt.warn('ds-bot: asking %s to run its written tool call failed: %s', id, error))
+          }
+        }
+        if (taskPending?.exhausted && taskPending.report) {
+          const warning = `${taskPending.text}\n自动续执行已停止，任务仍为未完成；请处理上述阻塞。`
+          texts.push(warning)
+          if (taskPending.report) {
+            rt.warn('ds-bot: %s', warning)
+            if (taskPending.action === 'submit') {
+              void rt.taskflowEscalate?.(taskPending)?.catch(error => rt.warn('ds-bot: task escalation failed: %s', error))
+            } else {
+              void rt.taskflowNotice?.(rt.roomOf(taskPending.roomId), warning)?.catch(error => rt.warn('ds-bot: continuation notice failed: %s', error))
+            }
           }
         }
         const replyText = () => {

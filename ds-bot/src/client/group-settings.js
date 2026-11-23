@@ -68,6 +68,10 @@ export function GroupSettingsForm({ room, roster, actions, run, onDeleted }) {
         h(InlineText, { label: t('Group name'), value: room.named ? room.name : '', placeholder: t('Name after members'), maxLength: 60, onSave: name => update({ name }) })),
       h(Row, { label: t('Notice'), hint: t('Every member reads it before speaking in this group.'), stack: true },
         h(InlineText, { label: t('Group notice'), value: room.notice, multiline: true, maxLength: 2000, placeholder: t('Shared instructions every member reads before speaking…'), onSave: notice => update({ notice }) }))),
+    h(Card, { title: '群组任务' },
+      h(SwitchRow, { label: '启用群组任务',
+        hint: '启用且有未完成正式任务时，每五分钟检查并提醒主理。切换聊天页面不影响；停用后停止自动检查。',
+        on: room.taskflowEnabled !== false, onChange: on => update({ taskflowEnabled: on }) })),
     h(Card, { title: t('Who answers') },
       h('div', { className: 'bt-set-row bt-bs-row bt-bs-stack' },
         h(Segmented, { label: t('Who answers'), value: mode }, ROOM_MODES.map(([id, label]) => h('button', {

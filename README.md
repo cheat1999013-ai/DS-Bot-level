@@ -157,6 +157,10 @@ Bots work with Office documents. They can create and edit .docx, .pptx and .xlsx
 
 All data stays on your own computer, in `bot/` and `sessions/` in the DSH home folder (`~/.dsh` by default). Uninstalling the plugin does not delete this data.
 
+Taskflow ledgers, consolidated insights and approved skills use `plugin-data/hermes-bot-taskflow` by default. The Bot entry's optional `taskflowHome` config selects an independent absolute directory, including a different drive, without relocating the team or Sessions. Stop the host and back up/copy existing taskflow data before changing it; see [plugin configuration](ds-bot/README.md#configuration).
+
+New Taskflow reflections record four parts: what was done, why it was done, how to avoid mistakes, and what is needed to do better next time. Executor notes and consolidated insights use the same ordered sections; historical text remains unchanged.
+
 ## Development
 
 The plugin source is in [`ds-bot/`](ds-bot/). For options and internals, see [`ds-bot/README.md`](ds-bot/README.md). For development, tests and how the team works, see [CONTRIBUTING.md](CONTRIBUTING.md). For changes between versions, see [CHANGELOG.md](CHANGELOG.md).

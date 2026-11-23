@@ -67,8 +67,16 @@ export const TEAM_TOOLS = [
   'create_group', 'update_group', 'delete_group', 'post_to_group', 'ask_user', 'show_view',
   'request_secret', 'list_secrets', 'group_relay', 'read_own_chat',
   'read_group_chat', 'remember', 'forget', 'recall', 'read_browser',
-  'list_capabilities', 'save_capability', 'delete_capability',
+  'list_capabilities', 'save_capability', 'delete_capability', 'prepare_bot_skills',
   'attach_capability', 'detach_capability', 'group_goal', 'list_connectors', 'request_connector',
+  'taskflow_members', 'taskflow_plan', 'taskflow_dispatch', 'taskflow_plans', 'taskflow_status', 'taskflow_results',
+  'taskflow_accept', 'taskflow_reject', 'taskflow_retry', 'taskflow_verify', 'taskflow_confirm',
+  'taskflow_submit', 'taskflow_finish', 'taskflow_cancel', 'taskflow_sleep_note',
+  'taskflow_sleep_pending', 'taskflow_sleep_consolidate', 'taskflow_memory_search', 'taskflow_memory_open',
+  'taskflow_skill_insights', 'taskflow_skill_propose_method', 'taskflow_skill_candidates', 'taskflow_skill_review', 'taskflow_skill_consolidate',
+  'taskflow_skill_level', 'taskflow_skill_search', 'taskflow_skill_open', 'taskflow_skill_score',
+  'taskflow_skill_publish', 'taskflow_skill_unpublish',
+  'skill_index_search', 'skill_index_status', 'skill_index_classify', 'skill_index_merge',
 ]
 // Consecutive automatic admin wakes with no goal progress before the goal waits
 // for the user instead of waking the admin again.

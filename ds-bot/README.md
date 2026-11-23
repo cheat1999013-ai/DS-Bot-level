@@ -13,6 +13,7 @@ Tested with dsh `0.2.2-rc.1` (Web and Desktop).
 - **Permission presets**: each Bot runs with its own dsh permission preset (Read only, Workspace or Full access), set in its details panel. A group chat can run all its members with one preset there, in place of their own: turn on **Same for every member** under Permissions in the group's settings. Only you set permissions; Bots cannot change them.
 - **Bots work together**: `message_bot` sends a message to another Bot, `create_bot` and `update_bot` add and set up Bots (including a profile photo from a local image file or a data URL), and `ask_user` asks you a question without blocking the other Bots. `show_view` draws a card in a Bot's own chat — text, metrics, tables, charts, inputs with local formulas, progress, choices, confirmations, short forms and sandboxed HTML; an interactive card waits for your answer. `/side` (or **Side chat** in the panel's `···` menu) opens a side chat in the right panel that answers from a snapshot of the Bot's chat without running tools or interrupting its work. A Bot can also be marked **Private** in its settings: other Bots cannot read its working folder, memory or chat, and its outbound sharing needs your approval.
 - **Group chats**: in admin-first mode the admin answers first and calls in other members with `@Name`; in all-members mode members speak in order. Members `@`-mentioned in the same message start work in parallel. Type `@` to pick a member from a list, or use **+ → Reference a chat** to attach another Bot's chat as context. A member with nothing new to add stays quiet (`[PASS]`). For multi-stage work, the admin can align on and run a group **Goal** (`group_goal`), assigning tasks per stage and checking evidence before advancing. Each member has its own hidden Session per group, so a group never reads a Bot's private chat.
+- **Taskflow**: group admins can create dependency plans with `taskflow_plan`, dispatch ready cards to group members, verify submitted results and finish after each card is accepted. The 16 `taskflow_*` tools, SQLite ledger and read-only Taskflow tab in each group chat's resizable details panel ship in DS Bot itself. The group chat header opens the tab directly; resizing the panel adjusts the conversation beside it, and settings dialogs remain above it. Test commands and confirmation decisions request your approval before execution or recording. The ledger lives under the DS Bot home as `taskflow.sqlite` and reopens after a restart; no separate taskflow plugin is needed.
 - **Roles and permissions**:
 
   | Who | Can do |
@@ -29,7 +30,7 @@ Tested with dsh `0.2.2-rc.1` (Web and Desktop).
 - **Images**: for a model that cannot read images, a vision model first turns the image into text.
 - **Secrets**: a Bot asks for an API key or token with a card in its own chat and never sees the value. See [Secrets](#secrets).
 - **Usage**: Settings → Usage shows token usage by time (24 hours to 12 months, or days picked on a calendar), by Bot and by model, with a page for each Bot and each model. Calls that a Session logs are read from the logs, so older chats count too. Calls that leave no log (checkpoints, handoff notes, the steward, image readings, dsh titles and compaction) are counted while they stream, from the time the plugin runs. Tokens only, no cost.
-- **Make it yours**: name, role, instructions, model and look (20 characters and 12 colors, or your own photo from the reusable avatar library) for each Bot; a theme, an accent color, a message layout (bubble or flat) with width sliders, and an avatar animation level (quiet, normal or lively) for the team. A pinned Bot or group chat shows a small pushpin in the sidebar. Settings has these pages: General (look, default model for new Bots, Enter key preference, mode and locations), Models, Bots (Main Bots, each Bot's settings and retained private-Bot folders), Group chats (each group's settings), Connectors, Capabilities, Browser, Scheduled tasks, Usage, Secrets, Feedback and About DS Bot (versions, updates and links).
+- **Make it yours**: name, role, instructions, model and look (20 characters and 12 colors, or your own photo from the reusable avatar library) for each Bot; a theme, an accent color, a message layout (bubble or flat) with width sliders, and an avatar animation level (quiet, normal or lively) for the team. A pinned Bot or group chat shows a small pushpin in the sidebar. Settings has these pages: General (look, default model for new Bots, Enter key preference, mode and locations), Models, Bots (Main Bots, each Bot's settings and retained private-Bot folders), Group chats (each group's settings), Taskflow (dependency plans and acceptance), Connectors, Capabilities, Browser, Scheduled tasks, Usage, Secrets, Feedback and About DS Bot (versions, updates and links).
 
 ## Install
 
@@ -59,6 +60,10 @@ The first time the team opens, the plugin creates a Main Bot called Chief.
 
 ## Configuration
 
+New executor and consolidated Taskflow reflections use four ordered Markdown sections: `做了什么` (what was done), `为什么这么做` (why), `里面的错误怎么避免` (how to prevent mistakes), and `要在下次任务中做的更好我需要什么` (what is needed to improve next time). Each section needs real content. Missing, empty, duplicate or out-of-order sections are rejected before saving; historical reflections remain unchanged.
+
+Skill promotion requires leader-assigned hierarchical tags, reviewed together with the body. Search by parent/child tags (for example `设计-UI`, `设计-网页`, `设计-电商图像`, `代码-前端`) and optional text. Every approved skill gets a persisted 72-hour rating window: successful explicit reads earn 0–2 frequency points, and the current source-group leader reviews six prompt-quality criteria worth 0–3 points. Zero-use skills still participate. Below 3 points once marks a skill as pending forgetting while it remains callable; a second low rating in the next independent window retires it. At least 3 points restores it. Retirement revokes local/shared access and removes only unchanged plugin-owned exports, preserving provenance and ratings. Host downtime does not fabricate missed ratings, and a missing quality review never counts as zero.
+
 Options go in the profile's `cordis.patch.yml`, under the `bot` entry. All of them are optional.
 
 ```yaml
@@ -67,6 +72,7 @@ Options go in the profile's `cordis.patch.yml`, under the `bot` entry. All of th
   config:
     workspace: /path/to/workspace   # where the Bots work; default <home>/workspace
     home: /path/to/bot-data         # where the team is saved; default $DSH_HOME/bot
+    taskflowHome: /absolute/path/to/taskflow-data  # independent taskflow ledgers and knowledge library
     checkRatio: 0.8                 # share of the model's usable window where the steward decides
     browser: true                   # force the Bot browser on or off; default on in Desktop and the desktop app only
     memory: true                    # false turns memory off: no memory tools, section or panel
@@ -76,6 +82,10 @@ Options go in the profile's `cordis.patch.yml`, under the `bot` entry. All of th
     updateRegistry: https://registry.example/   # ask only this npm registry for updates
     github: false                   # hide the GitHub connector; default shown in Connectors
 ```
+
+`taskflowHome` accepts a non-empty absolute directory, including paths with spaces (Windows example: `'D:\DS Bot data\knowledge'`). It contains `coordination.sqlite`, `knowledge.sqlite`, and `library/` for insights, group skills and approved shared skills. Omit it to keep the existing default under `plugin-data/hermes-bot-taskflow`; it does not change the Bot team or Session home. Invalid paths fail instead of silently selecting the default. Merge the option into the existing `bot` config. To relocate existing data, stop the host, back up and copy the complete taskflow directory, verify both databases and files, then update the config and restart. Changing the option alone does not migrate data.
+
+**Taskflow skill upkeep**: approved ordinary and excellent skills are reviewed every five days using recorded active reads and prompt quality. The first score below 3/5 marks a skill as pending forgetting while it stays usable; a second low score in the next cycle retires its managed publications. Premium skills are exempt from scoring and automatic forgetting or retirement. Classification tags and the existing group, tier and sharing approvals still apply.
 
 **Updates**: when a window opens, DS Bot asks where it was installed from for a newer release: the npm registry (the one the DSH plugin manager installs from, then its fallbacks), or the latest GitHub release for a `github:…#vX.Y.Z` install. A newer version shows a cloud button at the top right of the sidebar; **Update** reinstalls DS Bot through the DSH plugin manager, and the new version runs from the next DSH start. A linked or local checkout is never offered an update. Settings → About DS Bot shows the same state, with **Check for updates** to ask again at once.
 
@@ -174,6 +184,14 @@ Limits:
 - Only exact copies of a value are masked. A Bot that encodes, splits or reverses a value can still print it. Do not give important secrets to a Bot you do not trust.
 - On a page that is not HTTPS (for example dsh Web opened over http on a LAN), the value crosses the network in clear text. The card warns you.
 - Group chats show no cards; a Bot asks in its own chat.
+
+## DSH and Bot profiles
+
+Settings → Profiles shows two scopes. DSH profiles live under `$DSH_HOME/profiles/<name>/`: their `package.json` lists process-wide plugin bundles. Installing a plugin through DSH's plugin manager keeps its package in the DSH installation; the profile owns its bundle selection, not a private copy of the package. The desktop app passes its active DSH profile to DS Bot. Other launchers can set `DS_BOT_DSH_PROFILE` to their actual active profile name; if they do not, the page leaves the active state unknown and does not mount a guessed skill directory.
+
+When the DSH skill registry and `@deepseek-ai/dsh-skill-filesystem` are present, DS Bot also loads the active profile's `<DSH_HOME>/profiles/<name>/skills/` through DSH's filesystem provider. Skills in that directory use the normal `<skill>/SKILL.md` or `<skill>.md` layout. The Profiles page distinguishes stored profile skills from selected registry skills and lists running plugins absent from profile manifests. **Copy to active DSH profile** stages a file-backed skill and its local resources outside the watched skill directory, rejects links, checks for an existing name, and keeps its source files. Embedded skills without a filesystem path cannot be copied this way. The copy is reported active only if the DSH registry selects and loads it; a higher-priority skill with the same name can win instead.
+
+Bot profiles live in `$DSH_HOME/bot/state.json`. Each is a named selection of saved skills, MCP servers and packs from Settings → Capabilities. Assigning one to a Bot updates that Bot's attached capabilities and refreshes its sessions. **Classify existing Bots** creates a distinct profile for each unassigned Bot from its current capabilities, including empty Bots; it preserves existing assignments and does not move files. A Bot profile can record expected DSH plugin names, but assigning it does not load or unload process-wide plugins. Existing resources are listed as unclassified until you choose their profile; no existing files are moved automatically.
 
 ## Data and backups
 

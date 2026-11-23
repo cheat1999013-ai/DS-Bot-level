@@ -25,6 +25,23 @@ test('replaces a file that another program holds open for a moment', { skip: pro
   assert.equal(readFileSync(path, 'utf8'), 'new')
 })
 
+test('waits for a Windows reader that releases after the short retry window', { skip: process.platform !== 'win32' && 'only Windows refuses it' }, async (t) => {
+  const dir = folder(t)
+  const path = join(dir, 'state.json')
+  writeFileSync(path, 'old')
+  writeFileSync(`${path}.tmp`, 'new')
+  const reader = openSync(path, 'r')
+  let closed = false
+  const release = realTimeout(() => { closeSync(reader); closed = true }, 900)
+  try {
+    await replaceFile(`${path}.tmp`, path)
+    assert.equal(readFileSync(path, 'utf8'), 'new')
+  } finally {
+    realClearTimeout(release)
+    if (!closed) closeSync(reader)
+  }
+})
+
 test('stops trying when the check before a new try throws, and leaves the file as it was', { skip: process.platform !== 'win32' && 'only Windows refuses it' }, async (t) => {
   const dir = folder(t)
   const path = join(dir, 'state.json')

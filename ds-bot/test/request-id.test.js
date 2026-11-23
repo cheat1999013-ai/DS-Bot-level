@@ -249,20 +249,22 @@ test('a request with an id that queues, or that answers the user, goes out once'
   assert.equal(agents.get('b').calls.length, 2)
 })
 
-test('a request with an id in a group calls the member once', async (t) => {
+test('a group request id cannot bypass formal dispatch or acquire a success receipt', async (t) => {
   const seed = team({ group: true })
   seed.rooms.r1.sessions.a = 'ga'
   const home = tempHome()
-  const { rt, tool, stop } = await boot(home, seed)
+  const { rt, tool, stop, agentOf } = await boot(home, seed)
   t.after(async () => { await stop(); cleanup(home) })
 
   let posts = 0
   rt.roomStepText = async () => { posts += 1 }
   const first = await tool('message_bot', { to: 'Writer', message: 'do it', request_id: 'r-1' }, 'ga')
-  assert.match(first, /^Called Writer in "Ops"/)
-  assert.equal(posts, 1)
+  assert.match(first, /^Not sent: group work uses formal tasks/)
+  assert.equal(posts, 0)
   assert.equal(await tool('message_bot', { to: 'Writer', message: 'do it', request_id: 'r-1' }, 'ga'), first)
-  assert.equal(posts, 1)
+  assert.equal(posts, 0)
+  assert.deepEqual(rt.state.requests ?? {}, {})
+  assert.deepEqual([agentOf('b').calls, agentOf('gb').calls], [[], []])
 })
 
 test('a request that was in the air when DS Bot stopped is not sent again', async (t) => {

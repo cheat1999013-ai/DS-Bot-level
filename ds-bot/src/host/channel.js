@@ -132,7 +132,7 @@ export function install(rt) {
   }
   // What a host that only reads the team may still answer.
   // Updates change the dsh profile, not the team, so a reading host may run them too.
-  const READS = new Set(['state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'avatar-library', 'computer-system-status', 'computer-shot', 'local-agents'])
+  const READS = new Set(['state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'avatar-library', 'computer-system-status', 'computer-shot', 'local-agents', 'taskflow-state', 'profiles'])
 
   async function setPrefs(body) {
     if (body.theme !== undefined) {
@@ -205,6 +205,12 @@ export function install(rt) {
         case 'models':
           await rt.catalog({ fresh: true })
           return ok({ modelsKey: modelsKey() })
+        case 'taskflow-state':
+          return ok(await rt.taskflowView(body))
+        case 'taskflow-confirm-card':
+          if (body.stage === 'before_dispatch') return ok(await rt.taskflowPreflight(body))
+          if (body.stage === 'after_result') return ok(await rt.taskflowResultConfirmation(body))
+          return fail('Unknown confirmation stage', 'bot/invalid')
         case 'efforts':
           return ok(await rt.reasoningOf(String(body.ref ?? '')) ?? { efforts: [] })
         // A Turn's exact thinking time, from the timed stream in its events; `ms`
@@ -277,7 +283,7 @@ export function install(rt) {
         case 'room-progress': {
           // Any part id of the group's own Session means the group itself.
           const room = rt.roomOf(body.roomId) ?? rt.roomOf(rt.pastOwners.get(body.roomId)?.roomId)
-          return ok([...rt.roomProgress.entries()].filter(([, entry]) => entry.roomId === (room?.id ?? body.roomId)).map(([callId, entry]) => ({ callId, replies: entry.replies, speaking: entry.slots.filter(slot => slot.status === 'speaking').map(slot => slot.id) })))
+          return ok([...rt.roomProgress.entries()].filter(([, entry]) => entry.roomId === (room?.id ?? body.roomId)).map(([callId, entry]) => ({ callId, replies: entry.replies, speaking: entry.slots.filter(slot => slot.status === 'speaking' && !slot.taskflowEvent).map(slot => slot.id) })))
         }
         case 'create-bot': {
           await rt.bootstrap()
@@ -331,6 +337,7 @@ export function install(rt) {
           const { room, changes } = await rt.updateRoom(body.id, {
             name: body.name,
             notice: body.notice,
+            taskflowEnabled: body.taskflowEnabled,
             mode: body.mode,
             admin: body.admin,
             members: Array.isArray(body.members) ? body.members : undefined,
@@ -451,6 +458,20 @@ export function install(rt) {
         case 'bot-capability':
           await rt.load()
           return ok(await rt.capabilityEndpoint(endpoint, body))
+        case 'profiles':
+        case 'profile-save':
+        case 'profile-delete':
+        case 'profile-apply':
+        case 'profile-clear':
+        case 'profile-classify-bots':
+        case 'profile-skill-copy':
+          await rt.load()
+          return ok(await rt.profileEndpoint(endpoint, body))
+        case 'group-schedule-connect':
+        case 'group-schedule-create':
+        case 'group-schedule-update':
+        case 'group-schedule-delete':
+          return ok(await rt.groupScheduleEndpoint(endpoint, body))
         case 'schedules':
         case 'schedule-create':
         case 'schedule-delete':

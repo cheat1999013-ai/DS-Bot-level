@@ -3,9 +3,10 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import { build } from 'esbuild'
+import { install as installApprovals } from '../src/host/approvals.js'
 
 const bundle = await build({
-  entryPoints: [fileURLToPath(new URL('../src/client/member-status.js', import.meta.url))],
+  entryPoints: [process.env.MEMBER_STATUS_SOURCE ?? fileURLToPath(new URL('../src/client/member-status.js', import.meta.url))],
   bundle: true, format: 'cjs', platform: 'node', write: false,
   external: ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives'],
 })
@@ -22,7 +23,7 @@ runInNewContext(bundle.outputFiles[0].text, {
     return platform[name]
   },
 })
-const { busyMembers, summaryText, MemberDock, MemberState, StopMemberWork, StopRoomWork, memberWork } = module.exports
+const { busyMembers, summaryText, MemberDock, MemberState, StopMemberWork, StopRoomWork, memberWork, GroupApprovalDock } = module.exports
 // Values from the bundle's realm compare by content only.
 const plain = value => JSON.parse(JSON.stringify(value))
 // The dock's capsule in an element tree.
@@ -43,7 +44,7 @@ test('the members line names who waits for an approval first, then who is at wor
   const work = {
     bots: { d: { since: 1, tool: 'edit' }, a: { since: 1, tool: 'pwsh' }, f: { since: 1 } },
     rooms: { r1: [{ botId: 'd', since: 1, tool: 'edit' }, { botId: 'f', since: 1 }] },
-    approvals: [{ botId: 'a' }, { botId: 'b' }, { botId: 'c' }],
+    approvals: [{ botId: 'a', roomId: 'r1' }, { botId: 'b', roomId: 'r1' }, { botId: 'c', roomId: 'r1' }],
   }
   const busy = busyMembers(room, work, roster)
   assert.deepEqual(plain(busy.map(entry => [entry.bot.name, entry.state])), [['Anvil', 'ask'], ['Flint', 'ask'], ['Prism', 'ask'], ['Quill', 'work'], ['Comet', 'work']])
@@ -58,6 +59,94 @@ const team = {
   byId: Object.fromEntries(Object.entries(names).map(([id, name]) => [id, { id, name }])),
   roomsById: { r1: { id: 'r1', name: 'Ops', members: ['a', 'b', 'c', 'd'] }, r2: { id: 'r2', name: 'Docs', members: ['a', 'b'] } },
 }
+
+test('another group or private approval never marks the current group as waiting', () => {
+  const work = { bots: {}, rooms: {}, approvals: [
+    { id: 'other', botId: 'a', roomId: 'r2', answerable: true },
+    { id: 'private', botId: 'b', answerable: true },
+  ] }
+  assert.deepEqual(plain(busyMembers(team.roomsById.r1, work, team)), [])
+  assert.equal(MemberDock({ sessionId: 'r1', useRoster: pick => pick(team), useWork: pick => pick(work), actions: {} }), null)
+})
+
+const approvalNodes = (tree, found = []) => {
+  if (!tree || typeof tree !== 'object') return found
+  if (typeof tree.type === 'function') return approvalNodes(tree.type({ ...tree.props, children: tree.children }), found)
+  found.push(tree)
+  for (const child of tree.children ?? []) approvalNodes(child, found)
+  return found
+}
+const groupApproval = (actions, work, sessionId = 'r1') => GroupApprovalDock({ sessionId,
+  useRoster: pick => pick(team), useWork: pick => pick(work), actions })
+
+for (const choice of ['reject', 'allow']) test(`chat approval ${choice} settles the real pending request once`, async () => {
+  let request
+  const rt = { ctx: { on: (_event, listener) => { request = listener } },
+    groupOwners: new Map([['group-session', { roomId: 'r1', botId: 'a' }]]), chatOwners: new Map() }
+  installApprovals(rt)
+  const signal = new AbortController()
+  let executions = 0
+  const outcome = request({ agent: { session: { id: 'group-session' } }, toolName: 'write_file', reason: 'Review this example', signal: signal.signal }, () => assert.fail('group approvals must not be left in a hidden session'))
+    .then(decision => { if (decision === 'allowed-once') executions++; return decision })
+  const pending = rt.approvalsView()
+  const errors = []
+  const tree = groupApproval({ answerApproval: (id, answer) => rt.answerApproval(id, answer), reportError: error => errors.push(error.code) }, { approvals: pending })
+  const buttons = approvalNodes(tree).filter(node => node.type === 'button')
+  assert.equal(buttons.length, 2)
+  buttons[choice === 'reject' ? 0 : 1].props.onClick()
+  assert.equal(await outcome, choice === 'allow' ? 'allowed-once' : 'rejected')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(executions, choice === 'allow' ? 1 : 0)
+  assert.deepEqual(rt.approvalsView(), [])
+  buttons[1].props.onClick()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(errors, ['bot/stale'])
+  assert.equal(executions, choice === 'allow' ? 1 : 0, 'an old card must never approve a second execution')
+})
+
+test('pending group approval appears directly in chat and its buttons answer only that request', async () => {
+  assert.equal(typeof GroupApprovalDock, 'function')
+  const answers = []
+  const approvals = [
+    { id: 'here', botId: 'a', roomId: 'r1', tool: 'write_file', answerable: true, detail: { code: 'example.txt', parameters: JSON.stringify({ paths: ['first.md', 'second.md'] }) } },
+    { id: 'elsewhere', botId: 'a', roomId: 'r2', tool: 'unrelated', answerable: true },
+    { id: 'private', botId: 'a', tool: 'private', answerable: true },
+  ]
+  for (const choice of ['reject', 'allow']) {
+    const tree = groupApproval({ answerApproval: (...args) => answers.push(args) }, { approvals })
+    const nodes = approvalNodes(tree)
+    assert.equal(nodes.filter(node => node.props.className === 'bt-mw-card').length, 1)
+    assert.equal(nodes.filter(node => node.props['data-approval-id'] === 'here').length, 1)
+    assert.equal(nodes.filter(node => node.type === 'details' && node.props.className === 'bt-mw-parameters').length, 1)
+    assert.ok(nodes.some(node => node.type === 'pre' && node.children[0].includes('second.md')))
+    const buttons = nodes.filter(node => node.type === 'button')
+    assert.equal(buttons.length, 2, 'neither settings nor private-chat navigation is required')
+    buttons[choice === 'reject' ? 0 : 1].props.onClick()
+    await new Promise(resolve => setImmediate(resolve))
+  }
+  assert.deepEqual(answers, [['here', 'reject'], ['here', 'allow']])
+  assert.equal(groupApproval({}, { approvals }, 'a'), null)
+  assert.equal(groupApproval({}, { approvals: [] }), null)
+})
+
+test('rapid approval clicks submit only once and failures keep the request actionable', async () => {
+  assert.equal(typeof GroupApprovalDock, 'function')
+  const errors = [], calls = []
+  let reject
+  const request = new Promise((_resolve, fail) => { reject = fail })
+  const tree = groupApproval({ answerApproval: (...args) => { calls.push(args); return request },
+    reportError: error => errors.push(error.message) }, { approvals: [{ id: 'pending', roomId: 'r1', botId: 'b', tool: 'run', answerable: true }] })
+  const buttons = approvalNodes(tree).filter(node => node.type === 'button')
+  buttons[1].props.onClick(); buttons[0].props.onClick()
+  await Promise.resolve()
+  assert.equal(calls.length, 1)
+  reject(new Error('approval connection lost'))
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(errors, ['approval connection lost'])
+  buttons[0].props.onClick()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(calls, [['pending', 'allow'], ['pending', 'reject']])
+})
 
 // #156: a member waiting for an approval keeps its work here, so Stop stays.
 test('a member waiting for approval in this group can still be stopped', async () => {
@@ -133,7 +222,7 @@ const dock = (sessionId, work) => {
   return { label: capsule.props['aria-label'], calls }
 }
 
-test('one capsule names who waits and who works, without the round\'s speaker, and opens the details', () => {
+test('one capsule names who waits and keeps approval requests in the group chat', () => {
   const work = {
     // Anvil runs in its own chat too; its work here wins. Coral's work in r2 shows
     // there and on its own chat, not here (#473).
@@ -141,7 +230,7 @@ test('one capsule names who waits and who works, without the round\'s speaker, a
     rooms: { r1: [{ botId: 'a', since: 1, tool: 'write' }, { botId: 'd', since: 1, speaking: true }], r2: [{ botId: 'b', since: 1, tool: 'edit' }] },
     approvals: [{ botId: 'c', roomId: 'r1' }],
   }
-  assert.deepEqual(plain(dock('r1', work)), { label: 'Prism is waiting for your approval · Anvil · Writing changes…', calls: [['details', 'r1']] })
+  assert.deepEqual(plain(dock('r1', work)), { label: 'Prism is waiting for your approval · Anvil · Writing changes…', calls: [['session', 'r1']] })
   assert.equal(dock('r1', { bots: {}, rooms: { r1: [{ botId: 'd', since: 1, speaking: true }] }, approvals: [] }), null)
 })
 

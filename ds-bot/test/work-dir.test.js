@@ -35,7 +35,7 @@ const TEAM = {
 // starts in the team workspace unless it is made with a cwd. `services` are what
 // ctx.get finds, such as the sandbox policy and approvals.
 // `locked`: another dsh holds the team, so this one only shows it.
-async function start({ services = {}, workspaces = [], llm, team: saved = TEAM, locked = false, root: rootDir } = {}) {
+async function start({ services = {}, workspaces = [], llm, team: saved = TEAM, locked = false, root: rootDir, config = {} } = {}) {
   // The native realpath, as fs/promises uses: on Windows the JS one keeps 8.3 short names.
   const root = rootDir ?? realpathSync.native(mkdtempSync(join(tmpdir(), 'ds-bot-work-dir-')))
   mkdirSync(root, { recursive: true })
@@ -108,13 +108,14 @@ async function start({ services = {}, workspaces = [], llm, team: saved = TEAM, 
     route = options
     return register(options)
   }
-  rt = createRuntime(ctx, { home })
+  rt = createRuntime(ctx, { home, ...config })
   const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', {
     method: 'POST', body: JSON.stringify({ endpoint, payload }),
   }))).json()
   const tool = (name, args, sessionId) => rt.teamTools.find(d => d.name === name).execute(args, { agent: agentOf(sessionId), name, callId: 'c1' })
-  // Runs the parts check, registered last; 'next' means the step goes on.
-  const preStep = (sessionId, messages = [], step = 1) => ctx.listeners.get('agent/pre-step').at(-1)(
+  const partCheck = ctx.listeners.get('agent/pre-step').find(callback => callback.name === 'checkBotPart')
+  assert.equal(typeof partCheck, 'function')
+  const preStep = (sessionId, messages = [], step = 1) => partCheck(
     { agent: agentOf(sessionId), messages, step, signal: AbortSignal.timeout(60_000) }, async () => 'next')
   const state = () => JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))
   // Waits until the Bot's own chat runs in `dir` and its move has finished.
@@ -903,6 +904,28 @@ test('a copied team shows its default team workspace before the workspace is reg
   assert.equal((await call('folders', {})).value.team, resolve(join(home, 'workspace')))
 })
 
+test('an external taskflowHome is protected from Bot folders, workspace parents and photo reads', async (t) => {
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'ds-bot-taskflow-guard-')))
+  const parent = join(root, 'external-data')
+  const dataHome = join(parent, 'area skill')
+  mkdirSync(join(dataHome, 'library'), { recursive: true })
+  const { call, tool, state, project, stop } = await start({ root, config: { taskflowHome: dataHome } })
+  t.after(stop)
+  for (const path of [dataHome, join(dataHome, 'library'), parent]) {
+    assert.match((await call('update-bot', { id: 'b', workDir: path })).error?.message ?? '', /holds DeepSeek Harness data/)
+  }
+  assert.match((await call('team-workspace', { path: join(dataHome, 'new') })).error?.message ?? '', /holds DeepSeek Harness data/)
+  assert.equal(existsSync(join(dataHome, 'new')), false)
+  const alias = join(root, 'taskflow-link')
+  symlinkSync(dataHome, alias, process.platform === 'win32' ? 'junction' : 'dir')
+  assert.match((await call('update-bot', { id: 'b', workDir: alias })).error?.message ?? '', /holds DeepSeek Harness data/)
+  const pic = join(dataHome, 'pic.png')
+  writeFileSync(pic, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+  assert.match(await tool('update_bot', { avatar: pic }, 'b'), /in DeepSeek Harness data/)
+  assert.equal((await call('update-bot', { id: 'b', workDir: project })).value.workDir, project)
+  assert.equal(state().bots.b.workDir, project)
+})
+
 test('in the desktop app the user\'s own DSH data is no team workspace and no Bot\'s folder either', async (t) => {
   const { root, state, call, stop } = await start()
   t.after(stop)
@@ -1251,6 +1274,13 @@ test('a group\'s earlier parts page like a Bot\'s own chat', async (t) => {
     source: { kind: SOURCE_KIND, form: 'relay', role: 'post', senderName: 'Writer', senderSessionId: 'b', roomId: 'r1' },
     content: [{ type: 'text', text: '[Group post from Writer]\nDone.' }],
   }), { surfaceOp: 'append' })
+  record('user/message', createUserMessage({
+    source: { kind: SOURCE_KIND, role: 'post', taskflowEvent: { planId: 'plan-1', cardId: 'image' }, senderName: 'Writer', senderSessionId: 'b' },
+    content: [{ type: 'text', text: '[Group post from Writer]\nTask submitted.' }],
+  }), { surfaceOp: 'append' })
+  record('user/message', createUserMessage({ source: { kind: 'user', rpcId: 'legacy-call' },
+    content: [{ type: 'text', text: '@Chief [Taskflow plan-1/image] 已提报，等待逐卡验收。' }],
+  }), { surfaceOp: 'append' })
   const relay = record('tool/call', { turn: 1, step: 1, callId: 'toolu_relay_1', name: 'group_relay', arguments: '{}' })
   record('tool/result', {
     turn: 1, step: 1,
@@ -1276,9 +1306,13 @@ test('a group\'s earlier parts page like a Bot\'s own chat', async (t) => {
   assert.deepEqual(page.items.map(item => [item.kind, item.name ?? item.reply?.kind ?? null, item.text ?? item.texts?.[0] ?? null]), [
     ['user', null, '@Writer 文档在哪'],
     ['post', 'Writer', 'Done.'],
+    ['task', 'Writer', 'Task submitted.'],
+    ['user', null, '@Chief [Taskflow plan-1/image] 已提报，等待逐卡验收。'],
     ['post', 'Writer', '在 docs/ 下面'],
     ['relay', 'missed', null],
   ])
+  assert.deepEqual(page.items[2].taskflowEvent, { planId: 'plan-1', cardId: 'image' })
+  assert.deepEqual(page.items[3].source, { kind: 'user', rpcId: 'legacy-call' })
   assert.equal(page.cursor, null)
   assert.equal(typeof page.startedAt, 'number')
   // The first part itself has nothing before it.

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { composeEntries } from '@deepseek-ai/dsh-app-boot'
-import { BUNDLES, claimBundles, loadAppProfile } from '../src/profile.mjs'
+import { BUNDLES, claimBundles, loadAppProfile, loadCheckProfile } from '../src/profile.mjs'
 
 // Packages of DSH's own Web front end and its browser runtime, which the window shows.
 const DSH_WEB_FRONT_END = /^@deepseek-ai\/dsh-(client-ui-|web-app|web-frontend|client-modules|host-frontend-static|cordis-client-runner|client-hmr)/u
@@ -22,20 +22,35 @@ function rows(entries) {
 describe('the app profile', () => {
   let home
   let entries
+  const previousHome = process.env.DSH_HOME
+  const previousProfile = process.env.DS_BOT_DSH_PROFILE
   before(() => {
     home = mkdtempSync(join(tmpdir(), 'ds-bot-app-profile-'))
     process.env.DSH_HOME = home
+    delete process.env.DS_BOT_DSH_PROFILE
     const profile = loadAppProfile()
+    assert.equal(process.env.DS_BOT_DSH_PROFILE, 'ds-bot')
     assert.deepEqual(profile.layers.map((layer) => layer.packageName), BUNDLES)
     assert.deepEqual(profile.skippedBundles, [])
     entries = composeEntries([...profile.layers.map((layer) => layer.patches), profile.patches])
   })
-  after(() => { rmSync(home, { recursive: true, force: true }) })
+  after(() => {
+    rmSync(home, { recursive: true, force: true })
+    if (previousHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousHome
+    if (previousProfile === undefined) delete process.env.DS_BOT_DSH_PROFILE
+    else process.env.DS_BOT_DSH_PROFILE = previousProfile
+  })
 
   test('mounts DSH Web, which the window shows, and the Bot team', () => {
     const on = new Set(entries.filter((entry) => entry.disabled !== true).map((entry) => entry.id))
     for (const id of ['webserver', 'connection', 'bot']) assert.ok(on.has(id), `${id} is mounted`)
     assert.ok(rows(entries).some((entry) => DSH_WEB_FRONT_END.test(entry.name ?? '')), 'the DSH Web front end is mounted')
+  })
+
+  test('check profile clears the app skill scope', () => {
+    loadCheckProfile()
+    assert.equal(process.env.DS_BOT_DSH_PROFILE, undefined)
   })
 })
 

@@ -15,10 +15,10 @@ const { JSDOM } = createRequire(join(process.env.DSH_HARNESS ?? join(PLUGIN, '..
 const { outputFiles } = await build({
   stdin: {
     contents: [
-      "export { findHost, rowVisible, freshInputAt } from './src/client/activity-row.js'",
+      "export { ActivityIndicator, findHost, rowVisible, freshInputAt } from './src/client/activity-row.js'",
       "export { clientErrors } from './src/client/diagnostics.js'",
     ].join('\n'),
-    resolveDir: PLUGIN,
+    resolveDir: process.env.STAGED_BOT_ROOT ?? PLUGIN,
   },
   bundle: true, format: 'cjs', platform: 'browser', write: false, logLevel: 'silent',
   external: ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives'],
@@ -43,7 +43,31 @@ runInNewContext(outputFiles[0].text, {
   cancelAnimationFrame: id => clearTimeout(id),
   require: name => (name === 'react' ? react : name === 'react-dom' ? { createPortal: node => node } : {}),
 })
-const { findHost, rowVisible, freshInputAt, clientErrors } = module.exports
+const { ActivityIndicator, findHost, rowVisible, freshInputAt, clientErrors } = module.exports
+
+test('a running group renders only an indeterminate progressbar, then clears it on idle', () => {
+  dom.window.document.body.innerHTML = '<div data-chat-flow><div data-chat-running></div></div>'
+  const host = findHost()
+  const original = react.useState
+  const render = running => {
+    const states = [null, null, host]
+    react.useState = () => [states.shift(), () => {}]
+    return ActivityIndicator({
+      sessionId: 'room', useRoster: pick => pick({ byId: {}, roomsById: { room: { id: 'room' } } }),
+      useSessionStatus: pick => pick(new Map([['room', { running }]])),
+      useLive: pick => pick({ room: { relay: { relay: true, at: 1 } } }), useSession: pick => pick({}), actions: {},
+    })
+  }
+  try {
+    const bar = render(true)
+    assert.equal(bar.props.className, 'bt-room-progress')
+    assert.equal(bar.props.role, 'progressbar')
+    assert.equal(bar.props['aria-valuenow'], undefined)
+    assert.equal(bar.props.children.length, 1)
+    assert.equal(bar.props.children[0].type, 'span')
+    assert.equal(render(false), null)
+  } finally { react.useState = original }
+})
 
 test('the activity row mounts at the running slot even under an extra wrapper', () => {
   dom.window.document.body.innerHTML = '<div data-chat-flow><div class="wrap"><div data-chat-running id="slot"></div></div></div>'
@@ -80,7 +104,8 @@ test('the row shows while a turn runs, also when text streamed before a tool', (
     [{ running: true, streaming: true, tools: [{ relay: true }], relaying: true, bot }, false],
     [{ running: true, streaming: false, tools: [{ relay: true }], relaying: true, bot }, false],
     [{ running: true, streaming: false, tools: [], relaying: false }, false],
-    [{ running: true, streaming: false, tools: [], relaying: false, room: {} }, true],
+    [{ running: true, streaming: false, tools: [], relaying: false, room: {} }, false],
+    [{ running: true, streaming: false, tools: [{ label: 'x' }], relaying: false, room: {} }, false],
   ]
   for (const [input, expected] of cases) assert.equal(rowVisible(input), expected, JSON.stringify(input))
 })

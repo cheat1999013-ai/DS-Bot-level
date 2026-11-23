@@ -28,6 +28,7 @@ import { viaOf } from '../shared/im-platforms.js'
 import { mentionSpans, speakerOf } from '../shared/mentions.js'
 import { GROUP_REF, output } from './tools.js'
 import { failureLine } from './turns.js'
+import { nativeTaskSource, taskMessageOf, validateTaskEvent } from '../shared/taskflow-message.js'
 
 const ROOM_LOG_MAX = 60
 const ROOM_FIRST_LOOK = 12
@@ -50,6 +51,12 @@ const isIdleRelayText = (text, everyone, priorBodies) => {
   return priorBodies.some(prev => prev !== '' && (prev === norm || (prev.length >= 8 && norm.length >= 8 && (prev.includes(norm) || norm.includes(prev)))))
 }
 
+// A sole appointment sentence can change the group leader; tasks and questions cannot.
+const taskflowAppointment = (text, members) => {
+  const match = /^@(.+?)\s+你是[\p{Script=Han}]{0,12}(?:主控|总控|负责人|总监|组长|统筹|主管|lead)[。！!]?$/iu.exec(text?.trim() ?? '')
+  return match ? members.find(bot => bot.name === match[1]) : undefined
+}
+
 // Logs written before rooms were versioned get sequence numbers in place.
 const ensureRoomLog = (room) => {
   if (typeof room.seq !== 'number') {
@@ -63,7 +70,8 @@ const ensureRoomLog = (room) => {
 const unseenLines = (room, memberId) => {
   const since = room.seen[memberId]
   if (since === undefined) return room.log.slice(-ROOM_FIRST_LOOK)
-  return room.log.filter(line => line.seq > since && line.botId !== memberId).slice(-ROOM_DELTA_MAX)
+  return room.log.filter(line => line.seq > since && (line.botId !== memberId
+    || line.taskflowEvent?.event === 'recovery' && line.taskflowEvent.to?.id === memberId)).slice(-ROOM_DELTA_MAX)
 }
 
 // A notice keeps its fields, not a finished sentence: the line members read is written
@@ -103,6 +111,7 @@ export const lineText = (line, text = line.text) => {
   if (line.kind === 'stopped') return `[The user stopped ${speakerOf(line)}'s work here]`
   if (line.kind === 'done') return `[${speakerOf(line)} finished the work it was asked for]`
   if (line.kind === 'notice') return `[${noticeText(line)}]`
+  if (line.kind === 'task') return `[Bot task] ${text}`
   return `${speakerOf(line)}: ${text}`
 }
 const transcript = (lines, textOfLine = line => line.text) => lines.map(line => lineText(line, textOfLine(line))).join('\n')
@@ -132,6 +141,8 @@ export const mentionsIn = (text, members, references = []) => {
 // A saved list ignores opener.references. post_to_group posts carry none today; if
 // they gain references, handle them together with this list.
 function mentionsOf(opener, everyone) {
+  const task = validateTaskEvent(opener?.taskflowEvent)
+  if (task) return { all: false, found: everyone.filter(bot => bot.id === task.to.id) }
   const saved = opener?.mentions
   if (saved === undefined || !Array.isArray(saved.ids)) return undefined
   const byId = new Map(everyone.map(bot => [bot.id, bot]))
@@ -149,7 +160,7 @@ export const referenceNote = references => (references?.length
   : '')
 
 const ROOM_REPLY = 'Reply with your message for the group, no name prefix: in a discussion, one or two short messages. When you are asked to do something, call your first tool in the same step as your opening note — if you stop without a tool call, your turn ends and no work runs. The group does not wait for you and sees what you write while you work: say what you will do, write again only when something matters, and end with the result, never a promise to do it later. Reply [PASS] to stay silent when you have nothing new to add or the message is for someone else.'
-const ROOM_CALLS = 'Writing "@Name" calls that member at once, to answer or to do what you ask, as soon as your message is posted: call members before you start on your own part. Members called in one message start together and do not see each other\'s replies until they post, so when one needs another\'s result, call the first and ask it to call the next. When a member finishes work you gave it, you answer its result. To only mention a member, write its name without "@".'
+const ROOM_CALLS = 'Writing "@Name" addresses that member. Assign executor work through taskflow_plan and taskflow_dispatch, with dependencies on the cards when one result needs another. Executors return results through taskflow_submit and reflections through taskflow_sleep_note; ordinary mentions and group replies do not submit a task or delegate new work. The current group leader reads the submitted results and accepts or returns the cards. To only mention a member, write its name without "@".'
 
 const slotLabel = (slot, self) => {
   if (slot.status === 'speaking') return slot === self ? `${slot.name} (you, now)` : `${slot.name} (answering now)`
@@ -280,6 +291,12 @@ export function install(rt) {
   }
   rt.roomFolderNotice = roomFolderNotice
 
+  function reportGoalSubmission(room, line) {
+    if (line.kind === 'task' && line.botId !== undefined && line.taskflowEvent?.event === 'submitted'
+      && line.taskflowEvent.from?.id === line.botId) rt.goalTaskReported?.(room.id, line.botId)
+  }
+  ctx.effect(() => rt.onRoomLine(reportGoalSubmission), 'ds-bot: formal goal submissions')
+
   // A member's group Session, created on its first turn there. A new one starts with
   // a fresh look at the log and a brief of the member's own chat; the brief is the
   // first message, so it stays fixed and the prefix stays cacheable.
@@ -326,13 +343,15 @@ export function install(rt) {
     const peers = room.members.filter(id => id !== member.id).map(rt.botOf).filter(Boolean)
       .map(bot => `${bot.name}${rt.isAdminOf(room, bot.id) ? ' (admin)' : ''}`)
     const leads = rt.isAdminOf(room, member.id)
+    const replyRule = leads ? `${ROOM_REPLY} Delegate executor work through taskflow_plan and taskflow_dispatch; only formal task submissions return executor results.`
+      : 'You are an executor, not the group leader. Do not post ordinary group replies or reports. Submit your assigned card through taskflow_submit with its real planId and cardId; submit requested reflections through taskflow_sleep_note. The task event delivers your content to the leader for review. Keep progress in your task execution. If no card is assigned, do not invent one or claim a submission; reply [PASS]. After a formal submission, reply [PASS] rather than duplicating the result in chat.'
     const lines = unseenLines(room, member.id)
     const earlier = lines.filter(line => line.seq < round.startSeq).slice(-ROOM_EARLIER_MAX)
     const current = lines.filter(line => line.seq >= round.startSeq)
     const spokeThisRound = (room.seen[member.id] ?? 0) >= round.startSeq
     const members = `Members: the user${peers.length ? `, ${peers.join(', ')}` : ''} and you${leads ? ' (admin)' : ''}. ${ROOM_CALLS}`
     const notice = room.notice ? `Group notice (shared instructions for every member):\n${room.notice}` : ''
-    if (round.kickoff) return { text: [members, notice, leads ? adminNote(room) : '', roomKickoff(rt.uiLanguage?.())].filter(Boolean).join('\n\n'), images: [], files: [] }
+    if (round.kickoff) return { text: [members, notice, leads ? adminNote(room) : '', roomKickoff(rt.uiLanguage?.()), replyRule].filter(Boolean).join('\n\n'), images: [], files: [] }
     const goal = rt.goalBlock?.(room, member, { nudge: round.goalNudge === true, resume: round.goalResume === true }) ?? ''
     // Members answering in this round are named with the round below.
     const answering = new Set(round.slots.filter(other => other.status === 'speaking').map(other => other.id))
@@ -350,7 +369,7 @@ export function install(rt) {
       round.shown?.includes(member.id) ? '' : referenceNote(round.references),
       working.length > 0 ? `Still at work on what they were asked; each posts here when done: ${working.map(item => `${item.bot.name} (${minutesSince(item.since)} min${item.unread > 0 ? `, with ${item.unread} group message(s) it has not read yet` : ''})`).join(', ')}.` : '',
       ...placeLines(round, slot),
-      ROOM_REPLY,
+      replyRule,
     ].filter(Boolean).join('\n\n')
     const shown = [...earlier, ...current]
     return { text, images: shown.flatMap(line => line.images ?? []), files: shown.flatMap(line => line.files ?? []) }
@@ -406,7 +425,28 @@ export function install(rt) {
   //    in the batch finishes rather than woken piecemeal on every early reply.
   const roomBatches = new Map()
   const memberBatch = new Map()
+  const quietWorkers = new Set()
   const batchKeyOf = (roomId, botId) => `${roomId}:${botId}`
+  rt.taskflowQuietWorker = (roomId, botId, enabled) => {
+    const key = batchKeyOf(roomId, botId)
+    if (enabled) quietWorkers.add(key)
+    else quietWorkers.delete(key)
+  }
+  rt.taskflowNotice = async (room, text) => {
+    ensureRoomLog(room)
+    appendRoom(room, { who: 'DS Bot', kind: 'notice', text })
+    for (const round of rt.roomProgress.values()) {
+      if (round.roomId === room.id) round.replies?.push({ kind: 'notice', text, time: Date.now() })
+    }
+    await rt.save()
+  }
+  const maySpeakInRoom = (room, botId) => room.admin === botId && room.members.includes(botId) && rt.botOf(botId)?.id === botId
+  const isQuietWorker = (roomId, botId) => {
+    const room = rt.roomOf(roomId)
+    return (room !== undefined && !maySpeakInRoom(room, botId))
+      || quietWorkers.has(batchKeyOf(roomId, botId))
+      || rt.taskflowIsQuietWorker?.(roomId, botId) === true
+  }
 
   const activeInRoom = (room, botId) => {
     const sessionId = room.sessions?.[botId]
@@ -416,7 +456,7 @@ export function install(rt) {
   }
 
   const registerBatch = (roomId, by, callees) => {
-    if (by === undefined || callees.length === 0) return undefined
+    if (by === undefined || callees.length === 0 || !maySpeakInRoom(rt.roomOf(roomId), by)) return undefined
     const batch = {
       key: randomUUID(),
       roomId,
@@ -483,7 +523,7 @@ export function install(rt) {
   // called it, which answers what the turn posts after the round moved on. What the
   // member writes before its last step is posted at once and collected in `said`, and
   // `heard` takes each such line once it is posted.
-  async function roomTurn(room, member, sessionId, { text, images = [], files = [] }, note, signal, round, by, said = [], heard = () => {}, onWork = () => {}) {
+  async function roomTurn(room, member, sessionId, { text, images = [], files = [], taskflowEvent }, note, signal, round, by, said = [], heard = () => {}, onWork = () => {}) {
     if (signal.aborted) return null
     const startedAt = Date.now()
     const exchangeId = randomUUID()
@@ -514,7 +554,7 @@ export function install(rt) {
       }
       const say = (raw) => {
         const step = stripOwnName(member.name, raw)
-        if (isPass(step)) return
+        if (isPass(step) || isQuietWorker(room.id, member.id)) return
         said.push(step)
         postInRound(room, round, member, step, Date.now() - startedAt)
         heard(step)
@@ -524,7 +564,8 @@ export function install(rt) {
       signal.addEventListener('abort', () => finish(null), { once: true })
     })
     try {
-      await rt.deliver({ fromId: undefined, toId: member.id, sessionId, role: 'room', roomId: room.id, exchangeId, note, text, images, files, steer: busy, ...(by ? { askedBy: by } : {}) })
+      await rt.deliver({ fromId: undefined, toId: member.id, sessionId, role: 'room', roomId: room.id, exchangeId, note, text, images, files, steer: busy,
+        ...(taskflowEvent ? { taskflowEvent } : {}), ...(by ? { askedBy: by } : {}) })
       // The prompt reached the member: its read position moves on.
       room.seen[member.id] = seenAt
       // Still held by an earlier request: this turn cannot start until the user answers.
@@ -667,7 +708,7 @@ export function install(rt) {
   // every turn that starts from now on sees them. The members the message's own round
   // would open with answer it inside this round, as soon as they are free. Each message
   // leaves the Session's inbox, so it does not open another round when this one ends.
-  function drainRoomInbox(room, round, agent) {
+  async function drainRoomInbox(room, round, agent) {
     // The greeting's prompt tells the admin the user has not written yet.
     if (round.kickoff) return
     const lines = waitingLines(agent).filter(line => agent.inbox.remove(line.id))
@@ -677,8 +718,14 @@ export function install(rt) {
     rt.goalUserMessage?.(room.id)
     const members = room.members.map(rt.botOf).filter(Boolean)
     for (const line of lines) {
+      const appointed = taskflowAppointment(line.text, members)
+      if (appointed !== undefined) {
+        await rt.updateRoom(room.id, { admin: appointed.id, mode: 'admin' })
+        room.taskflowLeader = true
+      }
       appendRoom(room, { who: 'User', text: line.text, ...(line.via ? { via: line.via } : {}) })
       round.replies.push({ kind: 'user', text: line.text, time: Date.now(), ...(line.via ? { via: line.via } : {}) })
+      if (appointed !== undefined) continue
       const { all, found } = mentionsIn(line.text, members)
       const note = all || found.length > 0 ? 'the user mentioned you' : 'new message from the user'
       const { speakers, ordered } = openingCall(room, { text: line.text })
@@ -701,6 +748,13 @@ export function install(rt) {
     const found = named.filter(other => other.id !== member.id)
     const callees = (rt.isAdminOf(room, member.id) && all ? [...found, ...others.filter(other => !found.includes(other))] : found)
       .filter(peer => !called.has(peer.id))
+    if (round.formalDelegation && maySpeakInRoom(room, member.id) && callees.length > 0) {
+      if (!round.delegationCorrection && callees.some(peer => !rt.taskflowIsQuietWorker?.(room.id, peer.id))) {
+        round.delegationCorrection = true
+        callIn(round, [member], 'your plain @mentions did not assign work. For the current user request, inspect existing work with taskflow_results when applicable, then use taskflow_plan and taskflow_dispatch to assign any missing work. If dispatch is blocked, tell the user what is blocking it')
+      }
+      return
+    }
     for (const peer of callees) called.add(peer.id)
     if (callees.length === 0) return
     if (worked) {
@@ -748,7 +802,7 @@ export function install(rt) {
       if (!due) await new Promise((resolve) => { wake = resolve })
       due = false
       if (signal.aborted) break
-      drainRoomInbox(room, round, agent)
+      await drainRoomInbox(room, round, agent)
       for (const slot of round.slots) {
         if (!startable(round, slot)) continue
         const turn = memberTurn(room, round, slot, signal)
@@ -818,11 +872,12 @@ export function install(rt) {
       markBatchWorked(room.id, member.id)
     }
     const reply = await roomTurn(
-      room, member, session.id, { text, images: prompt.images, files: prompt.files }, slot.note ?? 'your turn', signal, round, slot.by, said,
-      line => callFrom(room, round, member, line, called, { worked, byBot: slot.by !== undefined }),
+      room, member, session.id, { text, images: prompt.images, files: prompt.files, taskflowEvent: slot.taskflowEvent }, slot.note ?? 'your turn', signal, round, slot.by, said,
+      line => { if (!isQuietWorker(room.id, member.id)) callFrom(room, round, member, line, called, { worked, byBot: slot.by !== undefined }) },
       onWork,
     )
-    const final = typeof reply === 'string' && !isPass(reply) ? reply : undefined
+    const final = typeof reply === 'string' && !isPass(reply) && !isQuietWorker(room.id, member.id) ? reply : undefined
+    const quietTaskflow = isQuietWorker(room.id, member.id)
     const subRunning = rt.hasSubagents?.(session.id) === true
     if (reply?.failure !== undefined) {
       // Not a pass: the user sees why the member is silent, and the round goes on.
@@ -869,9 +924,10 @@ export function install(rt) {
     if (reply?.failure !== undefined) rt.goalTaskReset?.(room.id, member.id, 'Could not finish: its model call failed')
     // Settle the member's place in its call batch when its work did not continue in the background.
     if (slot.status !== 'working') {
+      if (quietTaskflow && slot.status !== 'waiting-approval') rt.taskflowQuietWorker(room.id, member.id, false)
       const batch = (slot.batchKey ? roomBatches.get(slot.batchKey) : undefined) ?? memberBatch.get(batchKeyOf(room.id, member.id))
       if (batch !== undefined) {
-        if (slot.status === 'posted') {
+        if (slot.status === 'posted' && !quietTaskflow) {
           batch.done.push(member.name)
           if (called.size > 0) batch.answered = true
           if (worked) batch.worked = true
@@ -916,6 +972,14 @@ export function install(rt) {
           delete post.goalId
         }
       }
+      for (const post of posts) {
+        if (post.botId !== undefined || post.kickoff || post.goal !== undefined || post.images?.length || post.files?.length) continue
+        const appointed = taskflowAppointment(post.text, room.members.map(rt.botOf).filter(Boolean))
+        if (appointed === undefined) continue
+        await rt.updateRoom(room.id, { admin: appointed.id, mode: 'admin' })
+        room.taskflowLeader = true
+        post.quiet = true
+      }
       // A post a running round already logged stays inside the round this relay opens.
       const startSeq = Math.min(room.seq + 1, ...posts.map(post => post.logged).filter(seq => typeof seq === 'number'))
       // The opening greeting is a cue for the admin, not a line of the group; a member's
@@ -937,6 +1001,8 @@ export function install(rt) {
           ...(post.images === undefined ? {} : { images: post.images }),
           ...(post.files === undefined ? {} : { files: post.files }),
           ...(post.via === undefined ? {} : { via: post.via }),
+          ...(post.taskflowEvent ? { kind: 'task', taskflowEvent: post.taskflowEvent,
+            ...(post.taskSchemaVersion ? { taskSchemaVersion: post.taskSchemaVersion } : {}) } : {}),
         })
       }
       await rt.save()
@@ -951,7 +1017,8 @@ export function install(rt) {
       // A member a Bot's post calls by name works for that Bot. The saved list is the
       // whole message; the text may be only its opening.
       const everyone = room.members.map(rt.botOf).filter(Boolean)
-      const named = opener.botId === undefined ? [] : (mentionsOf(opener, everyone) ?? mentionsIn(opener.text ?? '', everyone)).found
+      const openerMentions = mentionsOf(opener, everyone) ?? mentionsIn(opener.text ?? '', everyone, opener.references)
+      const named = opener.botId === undefined ? [] : openerMentions.found
       const { speakers, ordered } = openingCall(room, opener)
       const calledByOpener = speakers.filter(member => named.includes(member))
       const openingBatchKey = opener.botId !== undefined && calledByOpener.length > 0 ? registerBatch(room.id, opener.botId, calledByOpener) : undefined
@@ -971,6 +1038,8 @@ export function install(rt) {
         startSeq,
         goalRevision: room.goal?.revision,
         ...(posts.some(userPost) ? { userMessage: true } : {}),
+        formalDelegation: userPost(opener) && speakers.length === 1 && speakers[0].id === admin?.id
+          && (openerMentions.all || openerMentions.found.some(bot => bot.id !== admin.id)),
         ...(opener.kickoff ? { kickoff: true } : {}),
         ...(opener.goal === 'nudge' ? { goalNudge: true } : {}),
         ...(opener.goal === 'resume' ? { goalResume: true } : {}),
@@ -978,6 +1047,7 @@ export function install(rt) {
         ...(references.length > 0 ? { references, shown: [] } : {}),
         slots: speakers.map(member => ({
           id: member.id, name: member.name, status: 'waiting', batch: 1,
+          ...(opener.taskflowEvent ? { taskflowEvent: opener.taskflowEvent } : {}),
           ...(ordered ? { ordered: true } : {}),
           ...(opener.kickoff ? { note: 'the group was just created' } : {}),
           ...(opener.goal === 'draft' || (draftPost !== undefined && admin !== undefined && member.id === admin.id) ? { note: 'the user wants to set a goal for this group' } : {}),
@@ -1146,6 +1216,7 @@ export function install(rt) {
   // user asked for is left for the user to read.
   // `ordered`: a plain message everyone answers in turn, admin first; any other call
   // starts its members at once.
+  const recoveryCalls = new WeakMap()
   function openingCall(room, opener) {
     const everyone = room.members.map(rt.botOf).filter(Boolean)
     const members = everyone.filter(bot => bot.id !== opener.botId)
@@ -1153,16 +1224,29 @@ export function install(rt) {
     const at = speakers => ({ speakers, ordered: false })
     if (opener.kickoff) return at(admin ? [admin] : [])
     if (opener.quiet) return at([])
+    if (opener.taskflowEvent?.event === 'recovery') {
+      // Selection may inspect the same opener twice. Claim once per persisted
+      // recovery reservation, then cache only for this in-memory selection.
+      if (!recoveryCalls.has(opener)) recoveryCalls.set(opener,
+        rt.taskflowClaimRecovery?.(room.id, opener.botId, opener.taskflowEvent) === true)
+      return at(recoveryCalls.get(opener) ? everyone.filter(bot => bot.id === room.admin) : [])
+    }
+    const task = validateTaskEvent(opener.taskflowEvent)
+    if (task) return at(members.filter(bot => bot.id === task.to.id))
     if (opener.done) return at(members.filter(bot => bot.id === opener.askedBy))
     // A goal post — the user's draft ask, an idle goal check, a resume — is the admin's alone.
     if (opener.goal !== undefined) return at(admin ? [admin] : [])
     const { all, found: named } = mentionsOf(opener, everyone) ?? mentionsIn(opener.text, everyone, opener.references)
     const found = named.filter(bot => bot.id !== opener.botId)
+    if (opener.botId === undefined && !opener.taskflowEvent
+      && (all || found.length === 0 || found.some(bot => bot.id !== room.admin && !rt.taskflowIsQuietWorker?.(room.id, bot.id)))) {
+      return at(admin ? [admin] : [])
+    }
     if (opener.progress) return at(found)
     if (opener.late) return at(found.length > 0 ? found : members.filter(bot => bot.id === opener.askedBy))
     if (opener.member) return at(found)
     if (found.length > 0 && !all) return at(found)
-    if (!all && room.mode === 'admin' && admin) return at([admin])
+    if (!all && (room.mode === 'admin' || room.taskflowLeader) && admin) return at([admin])
     const speakers = admin ? [admin, ...members.filter(bot => bot !== admin)] : members
     return { speakers, ordered: !all && speakers.length > 1 }
   }
@@ -1185,6 +1269,10 @@ export function install(rt) {
     const note = extra.done ? `${sender.name} finished the work you asked for` : undefined
     callIn(round, by, note ?? `${sender.name} mentioned you`, sender.id, { ordered })
     callIn(round, rest, note, undefined, { ordered })
+    if (extra.taskflowEvent) for (const peer of speakers) {
+      const slot = round.slots.find(slot => slot.id === peer.id && slot.status === 'waiting')
+      if (slot) slot.taskflowEvent = extra.taskflowEvent
+    }
     if (rt.isAdminOf(room, sender.id)) for (const peer of speakers) rt.goalTaskWorking?.(room.id, peer.id)
     if (extra.reportBack) {
       (round.reports ??= []).push({ post: { botId: sender.id, name: sender.name, reportBack: true, ...(extra.sub ? { sub: extra.sub } : {}), ...(extra.fromRoomId ? { fromRoomId: extra.fromRoomId } : {}) }, ids: speakers.map(peer => peer.id), from: round.replies.length })
@@ -1197,6 +1285,23 @@ export function install(rt) {
   // once, and the members it calls start in that round, so it is not held back until
   // the round ends and never sits in the group Session's QueueDock (#663).
   async function postToRoom(room, sender, text, extra = {}, files = []) {
+    if (extra.taskflowEvent) throw new Error('Use the native task delivery channel for task events')
+    return postRoomRecord(room, sender, text, extra, files)
+  }
+  async function postTaskToRoom(room, sender, text, extra = {}) {
+    const task = validateTaskEvent(extra.taskflowEvent)
+    if (!task || task.from.id !== sender.id || !room.members.includes(task.to.id)) throw new Error('Invalid native task route')
+    if (task.event === 'assigned' && task.schedule && typeof rt.assertGroupScheduleDelivery !== 'function') {
+      throw Object.assign(new Error('Scheduled task admission is unavailable'), { code: 'taskflow_delivery_cancelled' })
+    }
+    rt.assertGroupScheduleDelivery?.(room.id, task)
+    return postRoomRecord(room, sender, text, { ...extra, nativeTask: true })
+  }
+  async function postRoomRecord(room, sender, text, extra = {}, files = []) {
+    if (!maySpeakInRoom(room, sender.id) && !extra.taskflowEvent
+      && extra.failed === undefined && !extra.resumed && !extra.stopped && !extra.done) {
+      throw new Error('Executors must submit through a formal task: use taskflow_submit for results or taskflow_sleep_note for reflections.')
+    }
     const running = [...rt.roomProgress.values()].find(round => round.roomId === room.id && round.nudge !== undefined)
     if (running !== undefined) {
       ensureRoomLog(room)
@@ -1211,21 +1316,28 @@ export function install(rt) {
         running.replies.push({ kind, botId: sender.id, name: sender.name, color: sender.color, time: Date.now() })
       } else {
         const line = [text, ...files.map(fileLine)].filter(Boolean).join('\n')
-        appendRoom(room, { who: sender.name, botId: sender.id, text: line, ...(files.length > 0 ? { files } : {}) })
-        running.replies.push({ botId: sender.id, name: sender.name, color: sender.color, text: line, time: Date.now() })
+        const task = extra.taskflowEvent ? { kind: 'task', taskflowEvent: extra.taskflowEvent,
+          ...(extra.nativeTask ? { taskSchemaVersion: 1 } : {}) } : {}
+        appendRoom(room, { who: sender.name, botId: sender.id, text: line, ...task, ...(files.length > 0 ? { files } : {}) })
+        running.replies.push({ botId: sender.id, name: sender.name, color: sender.color, text: line, ...task, time: Date.now() })
       }
       callPost(room, running, sender, text, extra)
       await rt.save()
       return
     }
     const agent = await rt.resolveAgent(rt.sessionOfRoom(room))
+    if (extra.nativeTask) rt.assertGroupScheduleDelivery?.(room.id, extra.taskflowEvent)
+    if (extra.taskflowEvent?.recovery?.kind === 'reminder' && !rt.taskflowCanDeliverReminder?.(room, extra.taskflowEvent)) return false
     agent.followup(createUserMessage({
-      content: [{ type: 'text', text: `[Group post from ${sender.name}]\n${text}` }, ...files.map(attachment => ({ type: 'file', attachment }))],
-      source: { kind: SOURCE_KIND, form: 'relay', role: 'post', exchangeId: randomUUID(), senderName: sender.name, senderSessionId: sender.id, roomId: room.id, ...extra },
+      content: [{ type: 'text', text: extra.nativeTask ? text : `[Group post from ${sender.name}]\n${text}` }, ...files.map(attachment => ({ type: 'file', attachment }))],
+      source: extra.nativeTask
+        ? nativeTaskSource(room.id, extra.taskflowEvent, { ...extra, exchangeId: randomUUID() })
+        : { kind: SOURCE_KIND, form: 'relay', role: 'post', exchangeId: randomUUID(), senderName: sender.name, senderSessionId: sender.id, roomId: room.id, ...extra },
     }))
     await ctx.sessions.flush(agent.session)
   }
   rt.postToRoom = postToRoom
+  rt.postTaskToRoom = postTaskToRoom
 
   // A member the round moved on from (it went on working, went quiet or waited for an
   // approval) posts what its turn ended with. The member that asked for it and anyone
@@ -1237,6 +1349,13 @@ export function install(rt) {
     const room = rt.roomOf(owner?.roomId ?? info.roomId)
     const member = rt.botOf(owner?.botId)
     if (room === undefined || member === undefined || !room.members.includes(member.id)) return
+    if (isQuietWorker(room.id, member.id)) {
+      if (!rt.hasSubagents?.(sessionId)) {
+        rt.taskflowQuietWorker(room.id, member.id, false)
+        dropMemberFromBatch(room, member.id)
+      }
+      return
+    }
     const text = stripOwnName(member.name, reply)
     // While a DSH subagent of this member is still running, the member's work is not
     // finished yet: post any non-empty text as a progress line and keep its batch open.
@@ -1287,7 +1406,8 @@ export function install(rt) {
   const callsIn = (room, member, text) => mentionsIn(text, room.members.map(rt.botOf).filter(Boolean)).found.some(bot => bot.id !== member.id)
   rt.callsRoomMember = (sessionId, info, raw) => {
     const { room, member } = memberIn(sessionId, info) ?? {}
-    return room !== undefined && member !== undefined && callsIn(room, member, stripOwnName(member.name, raw ?? ''))
+    return room !== undefined && member !== undefined && !isQuietWorker(room.id, member.id)
+      && callsIn(room, member, stripOwnName(member.name, raw ?? ''))
   }
 
   // What a member says while it works, into the group. While the member holds its place
@@ -1298,7 +1418,7 @@ export function install(rt) {
     const waiter = info?.role === 'room' ? rt.roomWaiters.get(info.exchangeId) : undefined
     if (waiter !== undefined) return waiter.say(text)
     const { room, member } = memberIn(sessionId, info) ?? {}
-    if (room === undefined) return
+    if (room === undefined || isQuietWorker(room.id, member.id)) return
     ensureRoomLog(room)
     const calls = callsIn(room, member, text)
     const running = [...rt.roomProgress.values()].find(round => round.roomId === room.id)
@@ -1330,6 +1450,7 @@ export function install(rt) {
     if (room === undefined) return
     const text = stripOwnName(member.name, raw)
     if (isPass(text)) return
+    rt.taskflowRecordProgress?.(room.id, member.id)
     const entry = held.get(sessionId) ?? { last: 0, lines: [] }
     held.set(sessionId, entry)
     entry.info = info
@@ -1473,7 +1594,9 @@ export function install(rt) {
       // message from the user, a scheduled task, or a Bot's post after the last model or
       // tool step starts a relay.
       const opens = message => message.role === 'user'
-        && (message.source?.kind === 'user' || message.source?.kind === 'schedule' || (message.source?.kind === SOURCE_KIND && (message.source.role === 'post' || message.source.role === 'kickoff' || message.source.role === 'goal')))
+        && (message.source?.kind === 'user' || message.source?.kind === 'schedule'
+          || message.source?.kind === 'taskflow' && !!taskMessageOf(message)
+          || (message.source?.kind === SOURCE_KIND && (message.source.role === 'post' || message.source.role === 'kickoff' || message.source.role === 'goal')))
       const latest = [...options.messages].reverse()
         .find(message => message.role === 'assistant' || message.role === 'tool' || opens(message))
       if (latest?.role !== 'user') {

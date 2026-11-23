@@ -1,0 +1,775 @@
+--- a/index.js
++++ b/index.js
+@@ -40,6 +40,7 @@
+ import * as profileSkills from './src/host/profile-skills.js'
+ import * as learning from './src/host/learning.js'
+ import * as schedules from './src/host/schedules.js'
++import * as groupSchedules from './src/host/group-schedules.js'
+ import * as usage from './src/host/usage.js'
+ import * as update from './src/host/update.js'
+ import * as dshUpdate from './src/host/dsh-update.js'
+@@ -63,7 +64,7 @@
+ // install. Listeners run and tools are listed in registration order, so this order holds:
+ // usage meters model requests after every listener that rewrites them. privacy checks a
+ // call before the hooks of tools do, so a closed call never reaches a card they show.
+-const MODULES = [diagnostics, store, ledger, models, providers, permissions, turns, steer, handoffs, requests, delivery, roster, folders, privacy, agents, prompt, timeContext, tools, chatIndex, groups, goals, taskflow, approvals, resume, memory, parts, images, avatarLibrary, secrets, connectors, capabilities, profiles, profileSkills, learning, schedules, browser, browserPlugins, computer, usage, update, dshUpdate, thinking, mobile, feed, phone, im, channel, officeSkills, goalSkills, localAgents]
++const MODULES = [diagnostics, store, ledger, models, providers, permissions, turns, steer, handoffs, requests, delivery, roster, folders, privacy, agents, prompt, timeContext, tools, chatIndex, groups, goals, taskflow, approvals, resume, memory, parts, images, avatarLibrary, secrets, connectors, capabilities, profiles, profileSkills, learning, schedules, groupSchedules, browser, browserPlugins, computer, usage, update, dshUpdate, thinking, mobile, feed, phone, im, channel, officeSkills, goalSkills, localAgents]
+ 
+ export function apply(ctx, config = {}) {
+   createRuntime(ctx, config)
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "ds-bot",
+-  "version": "0.3.47-vertical-current.1",
++  "version": "0.3.48-group-schedule-repair.1",
+   "description": "DS Bot: a team of long-lived Bots for DeepSeek Harness, with Main Bots, Bot-to-Bot messages and group chats",
+   "keywords": [
+     "dsh-plugin",
+--- a/src/client/details-drawer.js
++++ b/src/client/details-drawer.js
+@@ -321,7 +321,7 @@
+     h('div', { key: `body:${tab}`, className: 'bt-drawer-body', 'data-move': move },
+       errorLine,
+       room && tab === 'details' ? h(GroupOverview, { room, roster, actions, usage, useWork, openSettings: () => setView('settings') }) : null,
+-      room && tab === 'taskflow' ? h(TaskflowPage, { key: room.id, roomId: room.id }) : null,
++      room && tab === 'taskflow' ? h(TaskflowPage, { key: room.id, roomId: room.id, actions }) : null,
+       bot && tab === 'computer' ? h(ComputerView, { bot, actions, hooks: { useComputer } }) : null,
+       bot && tab === 'details' ? [
+         h(RunStats, { key: 'stats', bot, part, running, actions }),
+--- a/src/client/i18n.js
++++ b/src/client/i18n.js
+@@ -11,6 +11,20 @@
+ export const NAMESPACE = 'ds-bot'
+ 
+ const ZH = {
++  'New group task': '新建群组定时任务',
++  'Create group task': '创建群组任务',
++  'Group task card': '群组任务卡',
++  Executor: '执行 Bot',
++  'Choose executor': '选择执行 Bot',
++  'Save executor': '保存执行 Bot',
++  '{count} occurrences waiting': '等待派发：{count} 次',
++  'Last run': '最近触发',
++  'Occurrence already recorded': '已记录该次触发',
++  Unavailable: '不可用',
++  'Not dispatched': '未派发',
++  'Needs review': '需要核查',
++  'Needs repair': '需要修复',
++  'At the scheduled time, the group principal dispatches a task card and receives the submitted result for acceptance.': '到点后由群组主理派发任务卡，执行 Bot 提交结果后回传主理验收。',
+   // Shared
+   'Main Bot': '主 Bot',
+   Working: '进行中',
+--- a/src/client/schedules.js
++++ b/src/client/schedules.js
+@@ -71,15 +71,18 @@
+   }
+ }
+ const nextText = (task) => {
++  if (task.schedulingError) return t('Needs repair')
+   if (task.state === 'overdue' || (task.state === undefined && task.status === 'active' && Date.parse(task.scheduledAt) <= Date.now())) return t('Overdue: {time}', { time: dayAndTime(Date.parse(task.scheduledAt)) })
+   if (task.status === 'paused') return t('Paused')
+   return task.status === 'active' ? t('Next: {time}', { time: dayAndTime(Date.parse(task.scheduledAt)) }) : t('Finished')
+ }
+ 
+-function TaskRow({ task, actions, onView, showBot, roster }) {
++export function TaskRow({ task, actions, onView, showBot, roster }) {
+   const [confirming, setConfirming] = useState(false)
+   const [expanded, setExpanded] = useState(false)
+   const [busy, setBusy] = useState(false)
++  const [memberId, setMemberId] = useState(task.memberId ?? '')
++  const [error, setError] = useState('')
+   useEffect(() => {
+     if (!confirming) return undefined
+     const timer = setTimeout(() => setConfirming(false), 3000)
+@@ -88,15 +91,36 @@
+   const remove = () => {
+     if (!confirming) { setConfirming(true); return }
+     setBusy(true)
+-    void actions.scheduleDelete(task.sessionId, task.id).then(onView, () => setBusy(false))
++    const operation = task.mode === 'group-card' ? actions.groupScheduleDelete(task.id) : actions.scheduleDelete(task.sessionId, task.id)
++    void operation.then(onView, () => setBusy(false))
+   }
+   const room = task.roomId ? roster.roomsById[task.roomId] : undefined
++  const members = (room?.members ?? []).filter(id => id !== room.admin).map(id => roster.byId[id]).filter(Boolean)
++  const changeExecutor = () => {
++    if (busy || !members.some(member => member.id === memberId)) return
++    setBusy(true)
++    setError('')
++    void actions.groupScheduleUpdate({ id: task.id, memberId }).then(view => { onView(view); setBusy(false) }, failure => {
++      setError(hostText(failure?.message ?? String(failure)))
++      setBusy(false)
++    })
++  }
+   return h('div', { className: 'bt-set-row bt-task', 'data-done': task.status === 'active' ? undefined : '', 'data-busy': busy || undefined },
+     showBot ? h(BotAvatar, { bot: roster.byId[task.botId], size: 28, badge: false, live: false }) : null,
+     h('button', { type: 'button', className: 'bt-set-copy bt-task-copy', 'aria-expanded': expanded || undefined, onClick: () => setExpanded(open => !open) },
+       h('span', { className: 'bt-task-title' }, task.title),
++      task.mode === 'group-card' ? h('span', { className: 'bt-set-hint' }, `${t('Group task card')} · ${roster.byId[task.memberId]?.name ?? t('Unavailable')}`) : null,
++      task.pendingCount ? h('span', { className: 'bt-set-hint' }, t('{count} occurrences waiting', { count: task.pendingCount })) : null,
+       h('span', { className: 'bt-set-hint' }, [timingText(task), room ? t('in {name}', { name: room.name }) : ''].filter(Boolean).join(' · ')),
++      task.lastRun ? h('span', { className: 'bt-set-hint' }, `${t('Last run')}: ${t({ dispatched: 'Dispatched', duplicate: 'Occurrence already recorded', dispatching: 'Dispatching', blocked: 'Not dispatched', 'needs-review': 'Needs review' }[task.lastRun.state] ?? 'Needs review')}${task.lastRun.error ? ` · ${task.lastRun.error}` : ''}`) : null,
++      task.schedulingError ? h('span', { className: 'bt-danger bt-set-hint' }, task.schedulingError) : null,
+       task.prompt && task.prompt !== task.title ? h('span', { className: 'bt-task-prompt', 'data-open': expanded || undefined }, task.prompt) : null),
++    task.mode === 'group-card' && expanded ? h('span', { className: 'bt-set-hint' },
++      h('select', { className: 'bt-select', value: members.some(member => member.id === memberId) ? memberId : '', 'aria-label': t('Executor'), disabled: busy, onChange: event => setMemberId(event.target.value) },
++        h('option', { value: '', disabled: true }, t('Choose executor')),
++        members.map(member => h('option', { key: member.id, value: member.id }, member.name))),
++      h('button', { type: 'button', className: 'bt-mini', disabled: busy || !members.some(member => member.id === memberId), onClick: changeExecutor }, t('Save executor')),
++      error ? h('span', { className: 'bt-danger' }, error) : null) : null,
+     h('span', { className: 'bt-task-next', 'data-state': task.state === 'overdue' ? 'overdue' : undefined }, nextText(task)),
+     h('button', {
+       type: 'button', className: 'bt-mini bt-task-remove', 'data-confirm': confirming || undefined, disabled: busy,
+@@ -113,9 +137,10 @@
+ const KINDS = [['at', 'Once'], ['daily', 'Every day'], ['weekly', 'Every week'], ['every', 'Repeat']]
+ const UNITS = [['minutes', 1, 'minutes'], ['hours', 60, 'hours'], ['days', 1440, 'days']]
+ 
+-function TaskForm({ roster, actions, start, onDone, onCancel }) {
+-  // A task goes to a Bot's chat or to a group chat, where it reads as your message.
+-  const [target, setTarget] = useState(start ?? roster.bots[0]?.id ?? '')
++export function TaskForm({ roster, actions, start, onDone, onCancel, group = false }) {
++  const choices = group ? roster.rooms : [...roster.bots, ...roster.rooms]
++  const [target, setTarget] = useState(choices.some(item => item.id === start) ? start : choices[0]?.id ?? '')
++  const [memberId, setMemberId] = useState('')
+   const [title, setTitle] = useState('')
+   const [prompt, setPrompt] = useState('')
+   const [kind, setKind] = useState('daily')
+@@ -126,6 +151,9 @@
+   const [unit, setUnit] = useState('hours')
+   const [busy, setBusy] = useState(false)
+   const [error, setError] = useState('')
++  const room = group ? roster.rooms.find(item => item.id === target) : null
++  const members = (room?.members ?? []).filter(id => id !== room.admin).map(id => roster.byId[id]).filter(Boolean)
++  const executor = members.some(member => member.id === memberId) ? memberId : members[0]?.id ?? ''
+   const timing = () => {
+     if (kind === 'at') return { kind, at: new Date(at).toISOString() }
+     if (kind === 'every') return { kind, minutes: Math.round(Number(count) * UNITS.find(([id]) => id === unit)[1]) }
+@@ -138,16 +166,24 @@
+     setError('')
+     let when
+     try { when = timing() } catch { setError(t('Pick a date and time')); setBusy(false); return }
+-    void actions.scheduleCreate({ target, title, prompt, when })
++    const operation = group ? actions.groupScheduleCreate({ target, memberId: executor, title, prompt, when })
++      : actions.scheduleCreate({ target, title, prompt, when })
++    void operation
+       .then(onDone, (failure) => { setError(hostText(failure?.message ?? String(failure))); setBusy(false) })
+   }
+   const toggleDay = day => setWeekdays(days => (days.includes(day) ? days.filter(item => item !== day) : [...days, day].sort()))
+   return h('form', { className: 'bt-set-card bt-task-form', onSubmit: submit },
+     h('label', { className: 'bt-set-row bt-bs-row' },
+       h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Send to'))),
+-      h('select', { className: 'bt-select bt-task-bot', value: target, onChange: event => setTarget(event.target.value) },
+-        h('optgroup', { label: t('Bots') }, roster.bots.map(bot => h('option', { key: bot.id, value: bot.id }, bot.name))),
+-        roster.rooms.length > 0 ? h('optgroup', { label: t('Group chats') }, roster.rooms.map(room => h('option', { key: room.id, value: room.id }, room.name))) : null)),
++      h('select', { className: 'bt-select bt-task-bot', value: target, 'aria-label': t(group ? 'Group chats' : 'Bots'), onChange: event => { setTarget(event.target.value); setMemberId('') } },
++        group ? choices.map(item => h('option', { key: item.id, value: item.id }, item.name)) : [
++          h('optgroup', { key: 'bots', label: t('Bots') }, roster.bots.map(bot => h('option', { key: bot.id, value: bot.id }, bot.name))),
++          roster.rooms.length ? h('optgroup', { key: 'rooms', label: t('Group chats') }, roster.rooms.map(room => h('option', { key: room.id, value: room.id }, room.name))) : null])),
++    group ? h('label', { className: 'bt-set-row bt-bs-row' },
++      h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Executor'))),
++      h('select', { className: 'bt-select bt-task-bot', value: executor, 'aria-label': t('Executor'), onChange: event => setMemberId(event.target.value) },
++        members.map(member => h('option', { key: member.id, value: member.id }, member.name)))) : null,
++    group ? h('p', { className: 'bt-set-hint' }, t('At the scheduled time, the group principal dispatches a task card and receives the submitted result for acceptance.')) : null,
+     h('label', { className: 'bt-set-row bt-bs-row' },
+       h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Name'))),
+       h('input', { className: 'bt-bs-input', value: title, maxLength: 120, placeholder: t('Morning briefing'), autoFocus: true, onChange: event => setTitle(event.target.value) })),
+@@ -171,7 +207,7 @@
+     error ? h('div', { className: 'bt-set-row' }, h('span', { className: 'bt-danger bt-set-hint' }, error)) : null,
+     h('div', { className: 'bt-set-row bt-task-foot' },
+       h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onCancel }, t('Cancel')),
+-      h('button', { type: 'submit', className: 'bt-send bt-soft-sm', disabled: busy || !target || title.trim() === '' || prompt.trim() === '' }, busy ? t('Creating…') : t('Create task'))))
++      h('button', { type: 'submit', className: 'bt-send bt-soft-sm', disabled: busy || !target || (group && !executor) || title.trim() === '' || prompt.trim() === '' }, busy ? t('Creating…') : t(group ? 'Create group task' : 'Create task'))))
+ }
+ 
+ // Settings has no schedule service to show: Automation tasks are off in DSH.
+@@ -188,6 +224,8 @@
+ // Bot's own view gets here.
+ export function SchedulesPage({ roster, actions, start }) {
+   const view = useSchedules(actions)
++  const groupStart = start?.startsWith('group:') ? start.slice(6) : roster.rooms.some(room => room.id === start) ? start : null
++  const [group, setGroup] = useState(groupStart !== null)
+   const owner = start?.startsWith('bot:') ? start.slice(4) : start?.startsWith('room:') ? start.slice(5) : null
+   const [adding, setAdding] = useState(Boolean(start) && owner === null)
+   if (view === null) return h('div', { className: 'bt-set-hint' }, t('Loading…'))
+@@ -199,9 +237,10 @@
+   ].filter(([id, , , tasks]) => tasks.length > 0 && (owner === null || id === owner))
+   return [
+     adding
+-      ? h(TaskForm, { key: 'form', roster, actions, start: owner ?? start, onDone: shown, onCancel: () => setAdding(false) })
++      ? h(TaskForm, { key: group ? 'group-form' : 'form', roster, actions, group, start: group ? groupStart ?? (roster.rooms.some(room => room.id === owner) ? owner : undefined) : owner ?? start, onDone: shown, onCancel: () => setAdding(false) })
+       : h('div', { key: 'add', className: 'bt-actions' },
+-          h('button', { type: 'button', className: 'bt-soft bt-soft-sm bt-with-icon', onClick: () => setAdding(true) }, h(PlusIcon), t('New task')),
++          h('button', { type: 'button', className: 'bt-soft bt-soft-sm bt-with-icon', onClick: () => { setGroup(false); setAdding(true) } }, h(PlusIcon), t('New task')),
++          h('button', { type: 'button', className: 'bt-soft bt-soft-sm bt-with-icon', disabled: !roster.rooms.length, onClick: () => { setGroup(true); setAdding(true) } }, h(PlusIcon), t('New group task')),
+           owner !== null ? h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => actions.openSettings('schedules') }, t('Show all')) : null),
+     byChat.length === 0 && !adding
+       ? h('div', { key: 'none', className: 'bt-set-card' }, h('div', { className: 'bt-set-row' }, h('span', { className: 'bt-set-hint' }, t('No scheduled tasks yet.'))))
+--- a/src/client/taskflow-dashboard.js
++++ b/src/client/taskflow-dashboard.js
+@@ -208,7 +208,7 @@
+     error ? h('small', { role: 'alert' }, error) : null)
+ }
+ 
+-export function TaskflowPage({ roomId }) {
++export function TaskflowPage({ roomId, actions }) {
+   const [scope, setScope] = useState(roomId ?? 'all')
+   const [data, setData] = useState(null)
+   const [rooms, setRooms] = useState([])
+@@ -287,6 +287,8 @@
+   }, [scope, roomId, revision])
+   return h(DashboardView, { data, rooms, scope, error, onScopeChange: setScope,
+     onLoadOlder: () => loadOlderRef.current?.(),
++    onSchedule: actions?.openSettings && scope !== 'all' && (!roomId || roomId === scope)
++      ? () => actions.openSettings('schedules', `group:${scope}`) : undefined,
+     onConfirm: roomId && data?.room?.id !== roomId ? undefined : async (cardId, decision, note, stage, terminal) => {
+       if (!data?.room?.id || !data.plan?.plan_id) throw new Error('Select a plan to decide')
+       await call('taskflow-confirm-card', { room: data.room.id, planId: data.plan.plan_id, cardId, decision, note, stage, terminal })
+@@ -295,7 +297,7 @@
+     onRefresh: () => setRevision(value => value + 1) })
+ }
+ 
+-export function DashboardView({ data, rooms = data?.rooms ?? [], scope = 'all', error = '', onScopeChange = () => {}, onRefresh = () => {}, onConfirm }) {
++export function DashboardView({ data, rooms = data?.rooms ?? [], scope = 'all', error = '', onScopeChange = () => {}, onRefresh = () => {}, onConfirm, onSchedule }) {
+   const selectedPlan = data?.plan
+   const plans = scope === 'all' && data?.fullPlans
+     ? data.fullPlans.filter(owner => data.rooms?.some(room => room.id === owner.room && room.planId === owner.plan_id))
+@@ -334,6 +336,7 @@
+         h('option', { value: 'all' }, t('All groups')),
+         rooms.map(room => h('option', { key: room.id, value: room.id }, room.name))),
+       h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onRefresh }, t('Refresh')),
++      onSchedule ? h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onSchedule }, t('New group task')) : null,
+       h('div', { className: 'bt-taskflow-legend', 'aria-label': t('Status legend') },
+         ['Running', 'Accepted', 'Failed', 'Pending'].map(label => h('span', { key: label, 'data-state': label.toLowerCase() }, t(label))))),
+     error ? h('p', { className: 'bt-error', role: 'alert' }, error) : null,
+--- a/src/client/team-actions.js
++++ b/src/client/team-actions.js
+@@ -206,6 +206,9 @@
+     copyProfileSkill: name => after(call('profile-skill-copy', { name })),
+     schedules: () => call('schedules'),
+     scheduleCreate: task => call('schedule-create', task),
++    groupScheduleCreate: task => call('group-schedule-create', task),
++    groupScheduleUpdate: task => call('group-schedule-update', task),
++    groupScheduleDelete: id => call('group-schedule-delete', { id }),
+     scheduleDelete: (sessionId, id) => call('schedule-delete', { sessionId, id }),
+     exchange: (a, b) => call('exchange', { a, b }).catch(() => []),
+     exchangeText: (id, a, b) => call('exchange-text', { id, ...(a !== undefined && b !== undefined ? { a, b } : {}) }).catch(() => undefined),
+--- a/src/host/channel.js
++++ b/src/host/channel.js
+@@ -553,6 +553,10 @@
+         case 'profile-skill-copy':
+           await rt.load()
+           return ok(await rt.profileEndpoint(endpoint, body))
++        case 'group-schedule-create':
++        case 'group-schedule-update':
++        case 'group-schedule-delete':
++          return ok(await rt.groupScheduleEndpoint(endpoint, body))
+         case 'schedules':
+         case 'schedule-create':
+         case 'schedule-delete':
+--- /dev/null
++++ b/src/host/group-schedules.js
+@@ -0,0 +1,238 @@
++import { randomUUID } from 'node:crypto'
++import { own } from './store.js'
++import { selectorOf, timingOf } from './schedules.js'
++import { taskflowRoomEnabled } from './taskflow/monitor.js'
++
++export function scheduleOccurrences(text) {
++  const batch = /^reminders_json: (.*)$/m.exec(text)
++  if (batch) return JSON.parse(batch[1])
++  const id = /^schedule_id_json: (.*)$/m.exec(text)
++  const at = /^occurrence_at: (.*)$/m.exec(text)
++  if (!id || !at) throw new Error('The scheduled task has no occurrence identity')
++  return [{ schedule_id: JSON.parse(id[1]), occurrence_at: at[1] }]
++}
++
++export function install(rt) {
++  const records = () => rt.state.groupSchedules ?? {}
++  const recordForSession = id => Object.values(records()).find(config => config.sessionId === id)
++  const writeCheck = () => { const reason = rt.readOnly(); if (reason !== undefined) throw new Error(reason) }
++  const service = () => {
++    const schedule = rt.scheduleService?.()
++    if (typeof schedule?.edit !== 'function') throw new Error('Group task cards require DSH Automation tasks')
++    return schedule
++  }
++  const errorText = error => (rt.redactSecrets?.(String(error?.message ?? error)) ?? String(error?.message ?? error)).slice(0, 500)
++  const active = new Set()
++  const removeTimers = async config => {
++    const schedule = service()
++    for (const entry of await schedule.catalog()) {
++      if (entry.target?.kind === 'session' && entry.target.sessionId === config.sessionId) {
++        await schedule.edit({ id: entry.id, action: 'delete' })
++      }
++    }
++    if ((await schedule.catalog()).some(entry => entry.target?.kind === 'session' && entry.target.sessionId === config.sessionId)) {
++      throw new Error('The group task timer could not be removed')
++    }
++  }
++
++  rt.groupSchedulesView = entries => Object.values(records()).map(config => {
++    const entry = entries.find(item => item.id === config.scheduleId && item.target?.sessionId === config.sessionId)
++    const lastRun = config.lastRun?.state === 'dispatching' && !active.has(config.id)
++      ? { ...config.lastRun, state: 'needs-review' } : config.lastRun
++    return { ...entry, id: config.id, sessionId: config.sessionId, roomId: config.roomId, memberId: config.memberId,
++      mode: 'group-card', title: config.title, prompt: config.prompt, lastRun, pendingCount: config.pendingOccurrences?.length ?? 0,
++      kind: entry?.kind ?? config.when.kind, time: entry?.time ?? config.when.time,
++      timeZone: entry?.timeZone ?? config.when.timeZone,
++      everySeconds: entry?.everySeconds ?? (config.when.kind === 'every' ? config.when.minutes * 60 : undefined),
++      status: entry?.status ?? 'paused', schedulingError: config.error ?? (config.stage !== 'ready' ? 'The group schedule needs repair' : undefined) }
++  })
++
++  rt.assertGroupScheduleDelivery = (roomId, event) => {
++    if (event?.event !== 'assigned' || !event.schedule) return
++    const config = Object.values(records()).find(item => item.scheduleId === event.schedule.id)
++    const room = rt.roomOf(roomId)
++    if (!config || config.stage !== 'ready' || config.roomId !== roomId || !taskflowRoomEnabled(room)
++      || room.admin !== event.from?.id || config.memberId !== event.to?.id || !room.members.includes(event.to?.id)) {
++      throw Object.assign(new Error('Scheduled assignment cancelled because the group or schedule changed'), { code: 'taskflow_delivery_cancelled' })
++    }
++  }
++
++  const create = async body => {
++    const schedule = service()
++    const room = rt.roomOf(body.target)
++    const member = rt.botOf(body.memberId)
++    if (!room || !room.members.includes(room.admin) || !rt.botOf(room.admin)) throw new Error('Choose a group with a current principal')
++    if (!member || !room.members.includes(body.memberId) || body.memberId === room.admin) throw new Error('Choose a non-principal executor in this group')
++    const title = String(body.title ?? '').trim()
++    const prompt = String(body.prompt ?? '').trim()
++    if (!title || title.length > 120) throw new Error('Give the group task a name under 120 characters')
++    if (!prompt || Buffer.byteLength(prompt, 'utf8') > 48000) throw new Error('Give the group task a goal under 48000 bytes')
++    const timing = timingOf(selectorOf(body.when))
++    const config = { id: randomUUID(), roomId: room.id, memberId: body.memberId, title, prompt,
++      when: structuredClone(body.when), sessionId: null, scheduleId: null, stage: 'creating' }
++    rt.state.groupSchedules ??= {}
++    rt.state.groupSchedules[config.id] = config
++    try {
++      await rt.save()
++      config.sessionId = await rt.createSession(`Group task schedule · ${title}`)
++      await rt.save()
++      const created = await schedule.create({ title, prompt, timing, target: { kind: 'session', sessionId: config.sessionId } })
++      if (typeof created?.id !== 'string' || !created.id) throw new Error('The schedule service did not return a task id')
++      config.scheduleId = created.id
++      config.stage = 'ready'
++      await rt.save()
++    } catch (error) {
++      config.stage = 'repair'
++      config.error = errorText(error)
++      if (config.sessionId) {
++        try { await removeTimers(config) } catch (cleanup) { config.error += `; ${errorText(cleanup)}` }
++      }
++      await rt.save().catch(failure => rt.warn('ds-bot: group schedule repair state could not be saved: %s', errorText(failure)))
++      throw error
++    }
++    return rt.scheduleEndpoint('schedules')
++  }
++
++  const remove = async body => {
++    const config = own(records(), body.id)
++    if (!config) throw new Error('No such group schedule')
++    config.stage = 'deleting'
++    await rt.save()
++    if (config.sessionId) {
++      await removeTimers(config)
++      await rt.ctx.workspaceRegistry?.archiveSession(config.sessionId, { stopActivity: true })
++    }
++    delete rt.state.groupSchedules[config.id]
++    try { await rt.save() } catch (error) { rt.state.groupSchedules[config.id] = config; throw error }
++    return rt.scheduleEndpoint('schedules')
++  }
++
++  const update = async body => {
++    const config = own(records(), body.id)
++    if (!config || config.stage !== 'ready') throw new Error('No editable group schedule')
++    const room = rt.roomOf(config.roomId)
++    if (!room || !rt.botOf(body.memberId) || !room.members.includes(body.memberId) || body.memberId === room.admin) {
++      throw new Error('Choose a non-principal executor in this group')
++    }
++    const oldMember = config.memberId
++    config.memberId = body.memberId
++    try { await rt.save() } catch (error) { config.memberId = oldMember; throw error }
++    return rt.scheduleEndpoint('schedules')
++  }
++
++  rt.groupScheduleEndpoint = async (endpoint, body = {}) => {
++    await rt.load()
++    writeCheck()
++    if (endpoint === 'group-schedule-create') return create(body)
++    if (endpoint === 'group-schedule-delete') return remove(body)
++    if (endpoint === 'group-schedule-update') return update(body)
++    throw new Error('Unknown group schedule action')
++  }
++
++  rt.cancelGroupSchedules = async roomId => {
++    for (const config of Object.values(records()).filter(item => item.roomId === roomId)) {
++      if (config.sessionId && typeof rt.scheduleService?.()?.edit !== 'function') {
++        // Keep the controller binding inert until Automation can remove its timer.
++        config.stage = 'deleting'
++        await rt.save()
++      } else await remove({ id: config.id })
++    }
++  }
++
++  const drainingRooms = new Set()
++  const waiting = error => ['plan_already_open', 'group_task_disabled', 'member_not_in_room', 'leader_only', 'leader_cannot_assign_self', 'taskflow_delivery_cancelled'].includes(error.code)
++
++  const drain = async () => {
++    await rt.load()
++    if (rt.readOnly() !== undefined) return
++    for (const config of Object.values(records()).filter(item => item.stage === 'deleting' && !rt.roomOf(item.roomId))) {
++      if (typeof rt.scheduleService?.()?.edit === 'function') {
++        try { await remove({ id: config.id }) } catch (error) { rt.warn('ds-bot: deferred timer cleanup: %s', errorText(error)) }
++      }
++    }
++    const frozenRooms = new Set(Object.values(records()).filter(config => config.stage === 'ready'
++      && ['dispatching', 'needs-review'].includes(config.lastRun?.state)).map(config => config.roomId))
++    const all = Object.values(records()).filter(config => config.stage === 'ready' && config.pendingOccurrences?.length
++      && !frozenRooms.has(config.roomId) && taskflowRoomEnabled(rt.roomOf(config.roomId)))
++      .sort((a, b) => a.pendingOccurrences[0].localeCompare(b.pendingOccurrences[0]) || a.id.localeCompare(b.id))
++    const attemptedRooms = new Set()
++    for (const config of all) {
++      if (attemptedRooms.has(config.roomId) || drainingRooms.has(config.roomId) || own(records(), config.id) !== config) continue
++      attemptedRooms.add(config.roomId)
++      drainingRooms.add(config.roomId)
++      active.add(config.id)
++      const occurrenceAt = config.pendingOccurrences.shift()
++      const previous = config.lastRun
++      config.lastRun = { occurrenceAt, state: 'dispatching' }
++      let admitted = false
++      try {
++        // Persist admission before creating a card. An interrupted admission is never replayed blindly.
++        await rt.save()
++        admitted = true
++        if (own(records(), config.id) !== config || config.stage !== 'ready') continue
++        writeCheck()
++        const result = await rt.taskflowDispatchScheduled({ scheduleId: config.scheduleId,
++          occurrenceAt, roomId: config.roomId, memberId: config.memberId, title: config.title, prompt: config.prompt })
++        config.lastRun = { occurrenceAt, state: result.duplicate ? 'duplicate' : result.sent?.length ? 'dispatched' : 'needs-review',
++          planId: result.plan?.plan_id ?? result.planId,
++          ...(result.held?.length ? { error: result.held.map(item => item.reason).join('; ') } : {}) }
++        delete config.error
++        await rt.save()
++      } catch (error) {
++        if (!admitted) {
++          config.lastRun = previous
++          config.pendingOccurrences.unshift(occurrenceAt)
++        } else if (waiting(error)) {
++          config.pendingOccurrences.unshift(occurrenceAt)
++          config.lastRun = { occurrenceAt, state: 'blocked', error: errorText(error) }
++        } else config.lastRun = { occurrenceAt, state: 'needs-review', error: errorText(error) }
++        await rt.save().catch(failure => rt.warn('ds-bot: group task outcome could not be saved: %s', errorText(failure)))
++      } finally { active.delete(config.id); drainingRooms.delete(config.roomId) }
++    }
++  }
++  rt.drainGroupSchedules = drain
++  rt.ctx.effect(() => {
++    const timer = setInterval(() => void drain().catch(error => rt.warn('ds-bot: scheduled task queue: %s', errorText(error))), 300000)
++    void drain().catch(error => rt.warn('ds-bot: scheduled task queue: %s', errorText(error)))
++    return () => clearInterval(timer)
++  }, 'ds-bot: scheduled group task queue')
++
++  const runOccurrence = async (config, occurrence) => {
++    if (occurrence.schedule_id !== config.scheduleId || typeof occurrence.occurrence_at !== 'string'
++      || !Number.isFinite(Date.parse(occurrence.occurrence_at))
++      || new Date(occurrence.occurrence_at).toISOString() !== occurrence.occurrence_at) {
++      throw new Error('The timer occurrence does not match its saved group task')
++    }
++    if (config.lastRun?.occurrenceAt === occurrence.occurrence_at || config.pendingOccurrences?.includes(occurrence.occurrence_at)) return
++    config.pendingOccurrences ??= []
++    config.pendingOccurrences.push(occurrence.occurrence_at)
++    config.pendingOccurrences.sort()
++    await rt.save()
++    await drain()
++  }
++
++  rt.ctx.on('llm/stream', (options, next) => {
++    return (async function* dispatchGroupTask() {
++      await rt.load()
++      const config = recordForSession(options.sessionId)
++      if (!config) { yield* next(); return }
++      if (config?.stage === 'ready' && rt.readOnly() === undefined) {
++        const latest = [...options.messages].reverse().find(message => ['assistant', 'tool'].includes(message.role)
++          || (message.role === 'user' && ['user', 'schedule'].includes(message.source?.kind)))
++        if (latest?.role === 'user' && latest.source?.kind === 'schedule') {
++          try {
++            const text = typeof latest.content === 'string' ? latest.content : (latest.content ?? []).filter(block => block.type === 'text').map(block => block.text).join('\n')
++            const occurrences = scheduleOccurrences(text)
++            if (!Array.isArray(occurrences) || !occurrences.length) throw new Error('The timer has no scheduled occurrence')
++            for (const occurrence of occurrences) await runOccurrence(config, occurrence)
++          } catch (error) {
++            config.error = errorText(error)
++            await rt.save().catch(() => {})
++            rt.warn('ds-bot: group task trigger rejected: %s', errorText(error))
++          }
++        }
++      }
++      yield { type: 'finish', reason: { kind: 'stop' } }
++    })()
++  })
++}
+--- a/src/host/groups.js
++++ b/src/host/groups.js
+@@ -1713,6 +1713,10 @@
+   async function postTaskToRoom(room, sender, text, extra = {}) {
+     const task = validateTaskEvent(extra.taskflowEvent)
+     if (!task || task.from.id !== sender.id || !room.members.includes(task.to.id)) throw new Error('Invalid native task route')
++    if (task.event === 'assigned' && task.schedule && typeof rt.assertGroupScheduleDelivery !== 'function') {
++      throw Object.assign(new Error('Scheduled task admission is unavailable'), { code: 'taskflow_delivery_cancelled' })
++    }
++    rt.assertGroupScheduleDelivery?.(room.id, task)
+     return postRoomRecord(room, sender, text, { ...extra, nativeTask: true })
+   }
+   async function postRoomRecord(room, sender, text, extra = {}, files = []) {
+@@ -1741,6 +1745,7 @@
+       return
+     }
+     const agent = await rt.resolveAgent(rt.sessionOfRoom(room))
++    if (extra.nativeTask) rt.assertGroupScheduleDelivery?.(room.id, extra.taskflowEvent)
+     agent.followup(createUserMessage({
+       content: [{ type: 'text', text: extra.nativeTask ? text : `[Group post from ${sender.name}]\n${text}` }, ...files.map(attachment => ({ type: 'file', attachment }))],
+       source: extra.nativeTask ? nativeTaskSource(room.id, extra.taskflowEvent, { ...extra, exchangeId: randomUUID() }) : { kind: SOURCE_KIND, form: 'relay', role: 'post', exchangeId: randomUUID(), senderName: sender.name, senderSessionId: sender.id, roomId: room.id, ...extra },
+--- a/src/host/roster.js
++++ b/src/host/roster.js
+@@ -846,6 +846,7 @@
+   async function deleteRoom(id) {
+     const room = rt.roomOf(id)
+     if (room === undefined) throw new Error('Unknown group chat')
++    await rt.cancelGroupSchedules?.(id)
+     await rt.stopRoomWork?.(id)
+     // Before the group's Sessions leave the state, which the archive reads.
+     const archived = rt.archiveGroupMemory(room)
+--- a/src/host/schedules.js
++++ b/src/host/schedules.js
+@@ -51,13 +51,13 @@
+ const LIST_READ_LIMIT = 500
+ const OTHER_TASK_REFUSAL = 'This task belongs to another chat. A Bot reads and changes only the tasks of its own chat.'
+ const sameOwner = (a, b) => a !== undefined && b !== undefined && a.botId === b.botId && a.roomId === b.roomId
+-const timingOf = (selector) => {
++export const timingOf = (selector) => {
+   const [key] = Object.keys(selector)
+   return { kind: TIMING_KINDS[key], [key]: selector[key] }
+ }
+ 
+ // The settings form's timing as a create request selector.
+-function selectorOf(when) {
++export function selectorOf(when) {
+   const zone = typeof when?.timeZone === 'string' && when.timeZone !== '' ? when.timeZone : 'UTC'
+   switch (when?.kind) {
+     case 'at': {
+@@ -88,6 +88,7 @@
+ export function install(rt) {
+   const { ctx } = rt
+   let service = null
++  rt.scheduleService = () => service
+ 
+   const attach = (sub) => {
+     const own = sub.schedule
+@@ -112,7 +113,8 @@
+     if (service === null) return { available: false, tasks: [] }
+     const now = Date.now()
+     const tasks = []
+-    for (const entry of await service.catalog()) {
++    const catalog = await service.catalog()
++    for (const entry of catalog) {
+       const sessionId = sessionOf(entry)
+       const owner = sessionId === undefined ? undefined : ownerOf(sessionId)
+       if (!known(owner)) continue
+@@ -123,7 +125,7 @@
+         : entry.status === 'paused' ? 'paused' : 'finished'
+       tasks.push({ ...entry, sessionId, ...owner, state })
+     }
+-    return { available: true, tasks }
++    return { available: true, tasks: [...tasks, ...(rt.groupSchedulesView?.(catalog) ?? [])] }
+   }
+ 
+   const endpoints = {
+@@ -190,7 +192,7 @@
+ 
+   // DSH 0.2.2's task ids are Host-wide, so a Bot's schedule tools reach only the tasks
+   // that deliver to its own chat, or to the same group place, in any of its parts.
+-  ctx.on('tools/pre-execute', async (exec, next) => {
++  ctx.on('tools/pre-execute', async function checkOwnSchedules(exec, next) {
+     const decision = await next()
+     if (decision.kind !== 'allow' || !OWN_TASK_TOOLS.includes(exec.name) || service === null || !hostWide(service)) return decision
+     await rt.load()
+--- a/src/host/store.js
++++ b/src/host/store.js
+@@ -20,7 +20,7 @@
+   const { ctx, home, statePath } = rt
+ 
+   /** @type {{version:1, workspaceId?:string, mainBotIds:string[], bots:Record<string,any>, privateArchives:any[], rooms:Record<string,any>, agents:Record<string,any>, sections:any[], capabilities:{items:Record<string,any>}, exchanges:any[], exchangeTurns:Record<string,number[]>, revision:number}} */
+-  const state = { version: 1, mainBotIds: [], bots: {}, privateArchives: [], rooms: {}, agents: {}, sections: [], capabilities: { items: {} }, profiles: {}, exchanges: [], exchangeTurns: {}, works: {}, requests: {}, questions: {}, views: {}, closedCards: {}, prefs: {}, switching: {}, revision: 0 }
++  const state = { version: 1, mainBotIds: [], bots: {}, privateArchives: [], rooms: {}, agents: {}, sections: [], capabilities: { items: {} }, profiles: {}, groupSchedules: {}, exchanges: [], exchangeTurns: {}, works: {}, requests: {}, questions: {}, views: {}, closedCards: {}, prefs: {}, switching: {}, revision: 0 }
+   let loaded = null
+   let writing = Promise.resolve()
+   const { warn } = rt
+@@ -131,6 +131,7 @@
+       state.profiles = {}
+       migrated = true
+     }
++    if (state.groupSchedules === null || typeof state.groupSchedules !== 'object' || Array.isArray(state.groupSchedules)) state.groupSchedules = {}
+     for (const bot of Object.values(state.bots)) {
+       if (!Array.isArray(bot.capabilities)) {
+         bot.capabilities = []
+--- a/src/host/taskflow.js
++++ b/src/host/taskflow.js
+@@ -174,6 +174,15 @@
+     const room = state.room(roomId)
+     if (!active || !room) return false
+     return recovery.post(active, room, scheduler.planState(planId), cardId, 'exhausted')
++  }
++
++  rt.taskflowDispatchScheduled = async spec => {
++    const active = await start('taskflow_dispatch')
++    if (!active) throw new Error('Taskflow is unavailable')
++    const room = state.room(spec.roomId)
++    rt.assertGroupScheduleDelivery?.(spec.roomId, { event: 'assigned', schedule: { id: spec.scheduleId },
++      from: { id: room?.admin }, to: { id: spec.memberId } })
++    return active.dispatchScheduled(spec)
+   }
+ 
+   rt.taskflowTransferPrincipal = (roomId, from, to) => {
+--- a/src/host/taskflow/scheduler.js
++++ b/src/host/taskflow/scheduler.js
+@@ -87,6 +87,12 @@
+   ended_at REAL,
+   cancel_reason TEXT
+ );
++-- Keep occurrence tombstones even after completed plan details are archived.
++CREATE TABLE IF NOT EXISTS scheduled_occurrences (
++  schedule_id TEXT NOT NULL, occurrence_at TEXT NOT NULL,
++  plan_id TEXT NOT NULL UNIQUE, room TEXT NOT NULL,
++  PRIMARY KEY(schedule_id, occurrence_at)
++);
+ CREATE TABLE IF NOT EXISTS cards (
+   plan_id TEXT NOT NULL REFERENCES plans(plan_id),
+   card_id TEXT NOT NULL,
+@@ -412,8 +418,18 @@
+ 
+   // ---- plan creation -------------------------------------------------------
+ 
++  scheduledOccurrence(scheduleId, occurrenceAt) {
++    if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='scheduled_occurrences'").get()) return null
++    return this.db.prepare('SELECT * FROM scheduled_occurrences WHERE schedule_id=? AND occurrence_at=?').get(scheduleId, occurrenceAt) ?? null
++  }
++
++  scheduledOrigin(planId) {
++    if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='scheduled_occurrences'").get()) return null
++    return this.db.prepare('SELECT * FROM scheduled_occurrences WHERE plan_id=?').get(planId) ?? null
++  }
++
+   createPlan({ planId, room, principal, goal = null, cards, concurrency = 3, retryLimit = 1,
+-    testRequiredCards = [], testChecks = {}, confirmRequired = false, gates = {}, workdir = null }) {
++    testRequiredCards = [], testChecks = {}, confirmRequired = false, gates = {}, workdir = null, scheduled = null }) {
+     planId = identifier(planId, 'plan_id')
+     room = identifier(room, 'room')
+     principal = identifier(principal, 'principal')
+@@ -497,6 +513,10 @@
+       this.db.prepare(`INSERT INTO plans(plan_id, room, principal, goal, concurrency, retry_limit, status, created_at, confirm_required)
+         VALUES(?,?,?,?,?,?,'open',?,?)`)
+         .run(planId, room, principal, goal, concurrency, retryLimit, now, confirmRequired ? 1 : 0)
++      if (scheduled) {
++        this.db.prepare('INSERT INTO scheduled_occurrences(schedule_id, occurrence_at, plan_id, room) VALUES(?,?,?,?)')
++          .run(identifier(scheduled.scheduleId, 'schedule_id'), identifier(scheduled.occurrenceAt, 'occurrence_at'), planId, room)
++      }
+       for (const card of normalized) {
+         this.db.prepare(`INSERT INTO cards(plan_id, card_id, member, goal, position, state)
+           VALUES(?,?,?,?,?,'pending')`)
+--- a/src/host/taskflow/tools.js
++++ b/src/host/taskflow/tools.js
+@@ -11,6 +11,7 @@
+ import { SchedulerError, digest } from './scheduler.js'
+ import { contentDigest, readPublishedSkill } from './publication.js'
+ import { skillTags, tagsDigest, QUALITY_KEYS } from './skill-lifecycle.js'
++import { taskflowRoomEnabled } from './monitor.js'
+ import { defineTool } from '@deepseek-ai/dsh-tools'
+ 
+ const OUTPUT = {
+@@ -354,8 +355,10 @@
+     if (!state) return null
+     const names = this.botState.names(room)
+     const admin = this.botState.admin(room)
++    const scheduled = this.scheduler.scheduledOrigin(state.plan_id)
+     return {
+       ...state,
++      ...(scheduled ? { schedule: { id: scheduled.schedule_id, occurrenceAt: scheduled.occurrence_at } } : {}),
+       principal_name: names[state.principal] ?? admin?.name ?? state.principal,
+       room_name: room.name,
+       cards: state.cards.map(card => ({
+@@ -378,6 +381,10 @@
+     if (!sessionId) {
+       throw new SchedulerError('group_session_missing', `Group "${scope.room.name}" has no chat session yet; open it once in DS Bot, then retry`)
+     }
++    if (taskflowEvent?.schedule) {
++      const prefix = `@${taskflowEvent.to.name} `
++      if (text.startsWith(prefix)) text = text.slice(prefix.length)
++    }
+     await this.post({ scope, text, taskflow, taskflowEvent, requestId: randomUUID() })
+   }
+ 
+@@ -385,7 +392,9 @@
+     const from = this.botState.member(scope.room, scope.botId)
+     const to = this.botState.member(scope.room, recipient)
+     if (!from || !to) throw new SchedulerError('member_not_in_room', 'The task sender and recipient must still be group members')
++    const scheduled = this.scheduler.scheduledOrigin(state.plan_id)
+     return { planId: state.plan_id, cardId: card.id, event, goal: card.goal,
++      ...(scheduled ? { schedule: { id: scheduled.schedule_id, occurrenceAt: scheduled.occurrence_at } } : {}),
+       from: { id: from.id, name: from.name }, to: { id: to.id, name: to.name } }
+   }
+ 
+@@ -427,6 +436,11 @@
+         await this.postToRoom(scope, this.taskText(scope, state, decoratedCard), { planId: state.plan_id, cardId: card.id, member: card.member },
+           this.taskEvent(scope, state, decoratedCard, 'assigned', card.member))
+       } catch (error) {
++        if (error?.code === 'taskflow_delivery_cancelled') {
++          try { this.scheduler.releaseUnsent(state.plan_id, card.id) } catch { /* keep state */ }
++          held.push({ id: card.id, reason: String(error.message) })
++          continue
++        }
+         const reason = `delivery uncertain: ${error?.message ?? error}`
+         this.scheduler.markDispatchUnknown(state.plan_id, card.id, { reason })
+         held.push({ id: card.id, reason })
+@@ -468,6 +482,34 @@
+ 
+   plan(args, exec) {
+     const scope = this.scope(exec, args.group, { leader: true })
++    return this.planScope(args, scope)
++  }
++
++  async dispatchScheduled({ scheduleId, occurrenceAt, roomId, memberId, title, prompt }) {
++    const room = this.botState.room(roomId)
++    if (!room || !room.members.includes(room.admin) || !this.botState.bot(room.admin)) {
++      throw new SchedulerError('leader_only', 'A scheduled group task needs a current group principal')
++    }
++    if (!taskflowRoomEnabled(room)) throw new SchedulerError('group_task_disabled', 'Group taskflow is disabled or paused')
++    if (!this.botState.member(room, memberId)) throw new SchedulerError('member_not_in_room', 'The scheduled executor is no longer a group member')
++    if (typeof scheduleId !== 'string' || !scheduleId.trim() || scheduleId !== scheduleId.trim()
++      || typeof occurrenceAt !== 'string' || !Number.isFinite(Date.parse(occurrenceAt))
++      || new Date(occurrenceAt).toISOString() !== occurrenceAt) {
++      throw new SchedulerError('invalid_occurrence', 'A scheduled task needs its actual schedule id and canonical occurrence time')
++    }
++    const previous = this.scheduler.scheduledOccurrence(scheduleId, occurrenceAt)
++    if (previous) {
++      if (previous.room !== room.id) throw new SchedulerError('plan_other_room', 'This scheduled occurrence belongs to another group')
++      return { duplicate: true, planId: previous.plan_id }
++    }
++    const scope = { kind: 'group', room, botId: room.admin, bot: this.botState.bot(room.admin) }
++    const planId = `scheduled-${digest([scheduleId, occurrenceAt])}`
++    this.planScope({ planId, goal: title, children: [{ id: 'scheduled-task', member: memberId, goal: prompt, dependencies: [] }] },
++      scope, { scheduleId, occurrenceAt })
++    return this.dispatchScope(scope, planId)
++  }
++
++  planScope(args, scope, scheduled = null) {
+     const children = Array.isArray(args.children) ? args.children : []
+     const members = this.botState.members(scope.room)
+     const byRef = new Map()
+@@ -518,6 +560,7 @@
+       confirmRequired: args.confirmRequired === true,
+       gates,
+       workdir,
++      scheduled,
+     })
+     this.scheduler.setCurrentPlan(scope.room.id, state.plan_id)
+     return {

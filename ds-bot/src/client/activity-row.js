@@ -1,6 +1,6 @@
 import { createElement as h, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { BotMark, RoomAvatar } from './mark.js'
+import { BotMark } from './mark.js'
 import { Elapsed, Shimmer, PHRASES } from './cells.js'
 import { noteClientError } from './diagnostics.js'
 import { reducedMotion } from './motion.js'
@@ -18,7 +18,7 @@ export { reducedMotion }
 // A turn that streams text first and runs a tool after keeps its row once the
 // tool starts: streaming alone hides it, but running work must not.
 export const rowVisible = ({ running, streaming, tools, relaying, bot, room }) =>
-  running && (!streaming || tools.length > 0) && !relaying && (bot !== undefined || room !== undefined)
+  room === undefined && bot !== undefined && running && (!streaming || tools.length > 0) && !relaying
 
 // A queued message waits for the next turn, so only a transcript or steering
 // send counts as fresh input; a steer the host saw counts from when it landed.
@@ -127,9 +127,9 @@ export function ActivityIndicator({ sessionId, useRoster, useSessionStatus, useL
   const entries = useMemo(() => Object.values(JSON.parse(liveKey)), [liveKey])
   const streaming = entries.some(entry => entry.text)
   const tools = entries.filter(entry => !entry.text).sort((a, b) => a.at - b.at)
-  // Group chats show who is typing on their own while members speak.
   const relaying = tools.some(entry => entry.relay)
-  const visible = moveAt !== 0 || rowVisible({ running, streaming, tools, relaying, bot, room })
+  const groupProgress = room !== undefined && (running || moveAt !== 0)
+  const visible = room === undefined && (moveAt !== 0 || rowVisible({ running, streaming, tools, relaying, bot, room }))
   const tool = tools.at(-1)
   const inputRef = useRef(0)
   // A steer keeps the run going, so nothing else resets the row: fresh input is
@@ -186,9 +186,16 @@ export function ActivityIndicator({ sessionId, useRoster, useSessionStatus, useL
   // Only rows that take the activity row's place grow out of it.
   useRowEntrances(() => leaving.current || Date.now() - endedAt.current < 300)
   const host = useRunningHost(running || moveAt !== 0)
-  if (!host || phase === null || !shown) return null
+  if (!host) return null
+  if (room !== undefined) {
+    return groupProgress ? createPortal(h('div', {
+      className: 'bt-room-progress', role: 'progressbar',
+      'aria-label': t(moveAt !== 0 ? 'Switching working folder' : 'Thinking…'),
+    }, h('span', { 'aria-hidden': true })), host) : null
+  }
+  if (!bot || phase === null || !shown) return null
   return createPortal(h('div', { className: 'bt-typing', 'data-exiting': phase === 'out' ? '' : undefined, 'aria-hidden': true },
-    bot ? h(BotMark, { bot, size: 28, state: markState.current, live: true, pokeable: true }) : h(RoomAvatar, { room, roster, size: 28 }),
+    h(BotMark, { bot, size: 28, state: markState.current, live: true, pokeable: true }),
     h('span', { className: 'bt-typing-text' },
       h('span', { key: `${shown.key}:${shown.at}`, className: 'bt-typing-label' }, h(Shimmer, null, `${shown.text}…`)),
       h(Elapsed, { at: moveAt !== 0 ? moveAt : Math.max(turnAt ?? runAt.current, inputAt), className: 'bt-typing-time' }))), host)

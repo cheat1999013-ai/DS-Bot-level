@@ -49,7 +49,16 @@ if [ -z "${DSH_HARNESS:-}" ]; then
   [ -d "$DSH_HARNESS" ] || DSH_HARNESS="$MAIN/deepseek-harness"
   [ -d "$DSH_HARNESS" ] || DSH_HARNESS="$(dirname "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)")/deepseek-harness"
 fi
-export DSH_HARNESS
+if [ -d "$DSH_HARNESS" ]; then export DSH_HARNESS
+else unset DSH_HARNESS
+fi
+need_checkout() {
+  if [ -z "${DSH_HARNESS:-}" ]; then
+    echo 'This step needs a DeepSeek Harness source checkout (set DSH_HARNESS or place it beside ds-bot)' >&2
+    return 1
+  fi
+  return 0
+}
 WEB_PORT=31${SLOT}0 WEB_MOCK=88${SLOT}0 SMOKE_PORT=31${SLOT}1 SMOKE_MOCK=88${SLOT}1
 DESKTOP="$PLUGIN/dev/desktop-linux/desktop.sh"
 
@@ -87,6 +96,7 @@ step_unit() { cd "$PLUGIN" && npm test; }
 step_build() { cd "$PLUGIN" && node scripts/build-client.mjs --check; }
 step_lint() { cd "$PLUGIN" && npm run lint; }
 step_smoke() {
+  need_checkout || return 1
   cd "$PLUGIN" || return 1
   dev/bench.sh check-smoke "$SMOKE_PORT" "$SMOKE_MOCK" stop >/dev/null
   need_ports "$SMOKE_PORT" "$SMOKE_MOCK" || return 1
@@ -98,6 +108,7 @@ step_smoke() {
   return $status
 }
 step_web() {
+  need_checkout || return 1
   cd "$PLUGIN" || return 1
   dev/bench.sh check-web "$WEB_PORT" "$WEB_MOCK" stop >/dev/null
   need_ports "$WEB_PORT" "$WEB_MOCK" || return 1
@@ -108,6 +119,7 @@ step_web() {
   return $status
 }
 step_desktop() {
+  need_checkout || return 1
   cd "$PLUGIN" || return 1
   SLOT=$SLOT "$DESKTOP" check stop >/dev/null
   SLOT=$SLOT "$DESKTOP" check reset || return 1

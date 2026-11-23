@@ -1071,10 +1071,22 @@ html[data-platform=darwin] header[class*="_header"]:has(.bt-head) :is(a,button,i
 [class*="_scroll"]:has(> [class*="_column"]){padding:calc(60px + env(safe-area-inset-top,0px)) calc(11px + env(safe-area-inset-right,0px)) calc(16px + env(safe-area-inset-bottom,0px)) calc(16px + env(safe-area-inset-left,0px))!important}
 /* The goal island's pod hangs off the header over the transcript's first message. */
 body[data-bt-goal] [class*="_scroll"]:has(> [class*="_column"]){padding-top:calc(90px + env(safe-area-inset-top,0px))!important}
-/* The shell's running status only hosts the activity row (.bt-typing). */
+/* Progress theme hooks accept a CSS color and two CSS image layers. */
+body{--bt-room-progress-gradient:linear-gradient(90deg,#ed81a5,#f3a66d,#edcd72,#8bcba4,#75afea,#af96e9)}
+
+/* The shell's running status hosts the active conversation indicator. */
 [data-chat-running]{display:block!important;width:100%;min-height:0!important;margin:0!important;padding:0!important}
 [data-chat-running]>span:not([role=status]){display:none!important}
-[data-chat-running]:has(> .bt-typing){margin-top:var(--dsh-chat-flow-gap,12px)!important}
+[data-chat-running]:has(> :is(.bt-typing,.bt-room-progress)){margin-top:var(--dsh-chat-flow-gap,12px)!important}
+.bt-room-progress{display:block;width:100%;height:6px;overflow:hidden;border-radius:999px;background:var(--bt-line-2)}
+.bt-room-progress>span{
+  display:block;height:100%;width:32%;border-radius:inherit;
+  background-color:var(--bt-room-progress-color,var(--bt-accent));
+  background-image:var(--bt-room-progress-pattern,none),var(--bt-room-progress-gradient,none);
+  animation:bt-room-progress-slide 1.6s ease-in-out infinite;
+}
+@keyframes bt-room-progress-slide{from{transform:translateX(-100%)}to{transform:translateX(313%)}}
+@media(prefers-reduced-motion:reduce){.bt-room-progress>span{animation:none;margin-inline:auto}}
 .bt-typing{display:flex;align-items:center;gap:12px;height:36px;min-width:0;padding-inline-start:8px;transform-origin:0 50%;animation:bt-typing-in ${SPRING_TAP.duration}ms ${SPRING_TAP.easing} backwards}
 .bt-typing[data-exiting]{animation:bt-typing-out .14s cubic-bezier(.22,1,.36,1) forwards}
 .bt-typing>.bt-mark,.bt-typing>.bt-cluster{flex-shrink:0}

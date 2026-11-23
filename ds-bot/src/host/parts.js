@@ -19,6 +19,7 @@ import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { openTurnAt } from './btw.js'
 import { HANDOFF_ACK, HISTORY_TIMEOUT_MS, REPLY_KIND, SOURCE_KIND } from './constants.js'
 import { parseReplies, stackReplies } from '../shared/group-replies.js'
+import { legacyTaskCandidate, taskMessageOf, isTeamMessageSource } from '../shared/taskflow-message.js'
 import { CHECKPOINT_PROMPT, STEWARD_SYSTEM, checkpointCount, checkpointTail, checkpointTailNote, checkpointText, linesFor, parseDecision, stewardRequest } from './steward.js'
 import { RESUME_DELAY_MS } from './resume.js'
 import { clip, createClock, escapeRegExp, estimateTokens, splitRef, textOf } from './text.js'
@@ -145,9 +146,9 @@ export function historyEntry(event, group) {
   if (event.type === 'user/message' && source?.kind === REPLY_KIND) {
     return { answer: false, who: 'user', text: replyText(textOf(event.data.content)), keepAnswers: true }
   }
-  if (event.type !== 'user/message' || (source?.kind !== 'user' && source?.kind !== SOURCE_KIND)) return undefined
+  if (event.type !== 'user/message' || (source?.kind !== 'user' && !isTeamMessageSource(source))) return undefined
   const text = textOf(event.data.content)
-  const ours = source.kind === SOURCE_KIND
+  const ours = isTeamMessageSource(source)
   const skipped = (ours && (source.handoff === true || source.role === 'kickoff' || source.role === 'goal')) || (!group && text.startsWith('[Group chat'))
   // A turn that went on after a handoff did real work, so its answers stay.
   return { answer: false, who: ours ? 'bot' : 'user', text: skipped ? '' : text, keepAnswers: !skipped || (ours && source.resume === true) }
@@ -840,7 +841,7 @@ export function install(rt) {
   const noteInfo = (template, ...args) => { try { ctx.logger.info(template, ...args) } catch {} }
 
   // A message's inbox boundary, the same one forward() delivers it to.
-  const inboxTargetOf = message => (message.source?.kind === 'user' || message.source?.kind === SOURCE_KIND || message.source?.kind === REPLY_KIND ? 'next-turn' : 'next-step')
+  const inboxTargetOf = message => (message.source?.kind === 'user' || isTeamMessageSource(message.source) || message.source?.kind === REPLY_KIND ? 'next-turn' : 'next-step')
 
   // Input a switch could not hand on goes back into the part's own durable inbox, in
   // order: input followup would deliver waits for the next turn, the rest waits for
@@ -1151,7 +1152,7 @@ export function install(rt) {
   // Runs first: an earlier part hands its input on, a part past the hard line makes
   // room before the step (condensed in place, or it stops and goes on in a fresh
   // part), and the backend's own pre-step listener sees the wrapper.
-  ctx.on('agent/pre-step', async (payload, next) => {
+  ctx.on('agent/pre-step', async function checkBotPart(payload, next) {
     await rt.load()
     const { agent } = payload
     const past = rt.pastOwners.get(agent.id)
@@ -1480,20 +1481,22 @@ export function install(rt) {
         const content = Array.isArray(event.data.content) ? event.data.content : []
         const images = content.filter(block => block?.type === 'image').length
         const via = viaOf(source)
-        stamp(event, { kind: 'user', text: textOf(content), ...(images > 0 ? { images } : {}), ...(via ? { via } : {}), time: event.time })
+        stamp(event, { kind: 'user', text: textOf(content), ...(legacyTaskCandidate({ ...event.data, time: event.time }) ? { source } : {}), ...(images > 0 ? { images } : {}), ...(via ? { via } : {}), time: event.time })
       } else if (source?.kind === REPLY_KIND) {
         const text = textOf(event.data.content)
         const reply = readReply(text)
         if (reply?.questions !== undefined) stamp(event, { kind: 'answer', questions: reply.questions, answers: reply.answers, time: event.time })
         else if (reply?.handoff !== undefined) stamp(event, { kind: 'answer', text: replyText(text), handoff: reply.handoff, time: event.time })
         else if (reply?.views !== undefined) stamp(event, { kind: 'answer', text: replyText(text), views: reply.views, answers: reply.answers, time: event.time })
-      } else if (source?.kind === SOURCE_KIND && source.role === 'post') {
+      } else if ((source?.kind === SOURCE_KIND || source?.kind === 'taskflow') && source.role === 'post') {
         // A group's own Session reads as one conversation: member posts are its
         // messages. A post past what a message holds came as a file, with its start.
         const content = Array.isArray(event.data.content) ? event.data.content : []
         const file = source.length === undefined ? undefined : content.find(block => block?.type === 'file')?.attachment
+        const task = taskMessageOf(event.data)
         stamp(event, {
-          kind: 'post',
+          kind: task ? 'task' : source.kind === 'taskflow' ? 'task-error' : 'post',
+          ...(task ? { taskflowEvent: task } : {}),
           botId: source.senderSessionId ?? null,
           name: source.senderName ?? null,
           text: textOf(content).replace(/^\[Group post from (?:[^\r\n]*\]\r?\n|[^\]\r\n]*\])/, ''),

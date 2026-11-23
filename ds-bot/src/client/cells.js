@@ -1,3 +1,5 @@
+import { TaskMessage, TaskInputCell, TaskError, markdownLabels as mdLabels } from './task-message.js'
+import { taskMessageOf, legacyTaskCandidate } from '../shared/taskflow-message.js'
 import { createElement as h, Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { MarkdownText, writeClipboard } from './dsh-primitives.js'
@@ -18,7 +20,7 @@ import { t } from './i18n.js'
 import { call } from './api.js'
 import { failureLabel } from './diagnostics.js'
 import { turnReasoning, thinkingStep, opensReply, stepActivity } from './turn-reasoning.js'
-import { parseReplies, stackReplies } from '../shared/group-replies.js'
+import { parseReplies, relayRange, stackReplies } from '../shared/group-replies.js'
 import { FOLD_AT, FOLD_HUGE, stripLongNote, useFold } from './fold.js'
 import { noHover, useViewport, viewBottom } from './motion.js'
 import { heldCardKey } from './sources.js'
@@ -32,7 +34,7 @@ export { clockLabel }
 // -------------------------------------------------------------------------
 // Chat cells
 
-const mdLabels = () => ({ code: { copyLabel: t('Copy'), copiedLabel: t('Copied') }, footnotes: t('Footnotes') })
+
 
 // `lead` (a sender avatar in group chats) sits beside the last bubble, in the same
 // row, so it lines up with the bubble whether or not reactions hang below it.
@@ -366,7 +368,14 @@ function scheduleGroupChains(flow) {
 // One Bot message inside a group chat: avatar, name (with its group role), when it ran
 // and how long it took, bubble. The flat layout moves the avatar from beside the last
 // bubble to the head of the name row, so the text below runs the whole width.
-function GroupMessage({ bot, text, texts = [text], room, roster, actions, msgKey, useUi, whole, time, duration }) {
+function GroupMessage(props) {
+  const { bot, room, roster } = props
+  const principal = room?.admin === bot.id && room.members?.includes(bot.id) && roster.byId[bot.id]?.id === bot.id
+  if (room && !principal) return null
+  return h(PrincipalGroupMessage, props)
+}
+
+function PrincipalGroupMessage({ bot, text, texts = [text], room, roster, actions, msgKey, useUi, whole, time, duration }) {
   const ref = useRef(null)
   useLayoutEffect(() => {
     const el = ref.current
@@ -595,7 +604,14 @@ export function ChatRows({ items, sessionId, roster, actions, useUi, clock = fal
 function chatRow(row, key, { sessionId, selfId, roster, actions, useUi, onBtwDelete }) {
   switch (row.kind) {
     case 'divider': return h(PartLine, { key, time: row.time })
-    case 'user': return h(EarlierUser, { key, row, actions })
+    case 'user': {
+      const node = { data: { ...row, content: [{ type: 'text', text: row.text }] } }
+      return legacyTaskCandidate(node.data)
+        ? h(TaskInputCell, { key, node, sessionId, Fallback: EarlierUser, row, actions })
+        : h(EarlierUser, { key, row, actions })
+    }
+    case 'task-error': return h(TaskError, { key })
+    case 'task': return h(TaskMessage, { key, task: row.taskflowEvent, text: row.text, time: row.time })
     case 'answer': return h(AnsweredReply, { key, node: { data: row } })
     // A question or view card closed without an answer on it.
     case 'closed': return row.view === undefined
@@ -674,6 +690,7 @@ export function TriggerCell({ node, sessionId, useRoster, useSessions, useTurnCl
     : (body ?? h(CellEmpty))
 
   function triggerBody() {
+    if (source.kind === 'taskflow') return null
     if (source.kind === 'bot') {
       // A part opens with its handoff package, so the earlier parts go right above it.
       if (source.handoff === true) return h(EarlierParts, { sessionId, roster, actions })
@@ -687,6 +704,8 @@ export function TriggerCell({ node, sessionId, useRoster, useSessions, useTurnCl
       if (source.role === 'post') {
         // A post logged into a running round already shows there, not again as a trigger.
         if (source.logged !== undefined) return null
+        const task = taskMessageOf(data)
+        if (task) return h(TaskMessage, { task, text: stripHeader(contentText(data.content)), time: data.time })
         // A member's late failure, its work picked up after a restart, its work the user
         // stopped, or the end of its work shows as an event of the round it opens.
         if (source.failed !== undefined || source.resumed === true || source.stopped === true || source.done === true) return null
@@ -918,6 +937,9 @@ function useLiveNote(actions, sessionId, id, entry) {
 // for a reply that is not a member's message or the user's own line. `bot` is the
 // resolved member the reply names.
 function RelayEvent({ reply, bot, sessionId, actions }) {
+  if (reply.kind === 'task-error') return h(TaskError)
+  if (reply.kind === 'task') return h(TaskMessage, { task: reply.taskflowEvent, text: reply.text, time: reply.time })
+  if (reply.kind === 'notice') return h('div', { className: 'bt-event' }, reply.text)
   if (reply.kind === 'failed') {
     return h('div', { className: 'bt-event bt-event-error', role: 'status', title: [reply.code, reply.status, reply.text].filter(Boolean).join(' · ') },
       t('{name} stopped: {reason}. Switch its model or ask it to go on.', { name: bot.name, reason: failureLabel(reply.code, reply.text) }))
@@ -963,6 +985,28 @@ function RelayEvent({ reply, bot, sessionId, actions }) {
   return null
 }
 
+// Only closed ledger ranges are immutable. Open ranges keep reading late replies.
+const settledRows = new Map()
+
+export function GroupReplyCell({ node, sessionId, useRoster, ...props }) {
+  const visible = useRoster(roster => roster.roomsById[sessionId] !== undefined
+    && !isHiddenTurn(roster, sessionId, node.location?.turn?.turn))
+  if (!visible) return h(CellEmpty)
+  return h(GroupRelayToolView, { ...props, sessionId, useRoster, ...node.data, standalone: true })
+}
+
+export function GroupRelayToolView({ sessionId, callId, phase, block, useRoster, useUi, useWork, actions, standalone = false }) {
+  const roster = useRoster(value => value)
+  if (!standalone && actions.groupReplyNodes === true && roster.roomsById[sessionId] !== undefined) return h(CellEmpty)
+  if (phase === 'result' && (block?.isError || block?.error)) {
+    const error = block.error
+    const message = typeof error === 'string' ? error : error?.message || contentText(block.content)
+    return h('div', { className: 'bt-group-replies' },
+      h('div', { className: 'bt-event bt-event-error', role: 'alert' }, failureLabel(error?.code, message)))
+  }
+  return h(GroupReplies, { sessionId, callId, done: phase === 'result', content: block?.content, roster, actions, useUi, useWork })
+}
+
 function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi, useWork }) {
   const [live, setLive] = useState({ replies: [], speaking: [] })
   useEffect(() => {
@@ -981,16 +1025,57 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
     void tick()
     return () => { stop = true; clearTimeout(timer) }
   }, [done, sessionId, callId])
+  // A settled round names where its rows are in the group's book; one from before
+  // the ledger carries them in its result.
+  const resultText = done ? contentText(content) : ''
+  const range = done ? relayRange(resultText) : undefined
+  const rowsKey = range === undefined ? undefined : `${sessionId}:${range.from}:${range.to ?? ''}:${range.anchor ?? ''}`
+  const [view, setView] = useState(null)
+  const current = view?.key === rowsKey ? view : undefined
+  useEffect(() => {
+    if (rowsKey === undefined) return undefined
+    const known = settledRows.get(rowsKey)
+    if (known !== undefined) { setView({ ...known, key: rowsKey }); return undefined }
+    // Only the next anchor closes this range; a quiet round can receive late replies.
+    let stop = false
+    let timer
+    let seen = ''
+    let failed = false
+    const tick = async () => {
+      try {
+        const next = await actions.groupRows(sessionId, range.from, range.to, range.anchor)
+        if (stop) return
+        if (!Array.isArray(next?.rows) || typeof next.open !== 'boolean') throw new Error(t('The group replies could not be shown'))
+        if (!next.open) settledRows.set(rowsKey, next)
+        const key = JSON.stringify(next)
+        if (failed || key !== seen) { seen = key; setView({ ...next, key: rowsKey }) }
+        failed = false
+        // A quiet round can still be waiting for its principal's asynchronous reply.
+        if (!next.open) return
+      } catch (error) {
+        if (stop) return
+        if (!failed) actions.reportError?.(error, 'group-replies')
+        failed = true
+        setView(previous => ({ ...(previous?.key === rowsKey ? previous : { rows: [] }), key: rowsKey, error: true }))
+      }
+      timer = setTimeout(tick, document.hidden ? 5000 : 1000)
+    }
+    void tick()
+    return () => { stop = true; clearTimeout(timer) }
+  }, [rowsKey])
   let replies = live.replies
   let broken = false
-  if (done) {
-    const parsed = parseReplies(contentText(content))
+  if (range !== undefined) {
+    replies = current?.rows ?? []
+    broken = current?.error === true
+  } else if (done) {
+    const parsed = parseReplies(resultText)
     replies = parsed.replies.length ? parsed.replies : live.replies
     broken = parsed.broken
   }
   // Every member answering in the round is typing; what each is doing comes as text,
   // so the cell redraws only when that changes.
-  const pending = done ? [] : live.speaking
+  const pending = range !== undefined ? (current?.open ? current.speaking ?? [] : []) : done ? [] : live.speaking
   const doing = JSON.parse(useWork?.(work => JSON.stringify(pending.map((id) => {
     const tool = work.bots?.[id]?.tool
     return tool ? [tool, workPhrase(work.bots[id])] : []
@@ -1168,7 +1253,8 @@ export function ToolCell({ node, sessionId, useRoster, useUi, useWork, useHeldCa
   const hidden = isHiddenTurn(roster, sessionId, turn)
   const findBot = nameOrId => roster.byId[nameOrId] ?? roster.bots.find(bot => bot.name.toLowerCase() === String(nameOrId ?? '').toLowerCase())
   const calls = hidden ? [] : callTree(root)
-  const drawn = calls.filter(call => DRAWN.has(toolName(call)) || isComputerCall(toolName(call)))
+  const drawn = calls.filter(call => (DRAWN.has(toolName(call)) || isComputerCall(toolName(call)))
+    && !(actions.groupReplyNodes === true && roster.roomsById[sessionId] !== undefined && toolName(call) === 'group_relay'))
   // The newest call still running names the work, so a program reads as the tool it is in.
   const running = root.kind === 'tool-result' ? undefined : calls.findLast(call => call.kind !== 'tool-result')
   const note = running ? toolActivity(toolName(running), toolArgs(running).text, findBot, roster.byId[sessionId]) : null

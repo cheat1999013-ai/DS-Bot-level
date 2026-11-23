@@ -18,9 +18,9 @@ export default defineConfig({
   root: fileURLToPath(new URL('./ui', import.meta.url)),
   base: './',
   plugins: [ownPrimitives],
-  // The Bot views come from the plugin's interface code in ../ds-bot, which has no React
-  // of its own.
-  resolve: { dedupe: ['react', 'react-dom'] },
+  // The Bot views come from ../ds-bot; both its relative and package imports
+  // must resolve to this window's local primitives.
+  resolve: { dedupe: ['react', 'react-dom'], alias: { '@deepseek-ai/dsh-client-ui-primitives': primitives } },
   // One bundle: the window loads it from disk, not over a network.
   build: { outDir: 'dist', emptyOutDir: true, chunkSizeWarningLimit: 2048 },
 })

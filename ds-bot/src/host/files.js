@@ -5,7 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 // reading the team's state, the search indexer, a virus scanner, a sync client. Those
 // readers let go within moments.
 const BUSY = new Set(['EPERM', 'EACCES', 'EBUSY'])
-const TRIES = 6
+const TRIES = 10
 const WAIT_MS = 40
 
 /**
