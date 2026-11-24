@@ -4,6 +4,17 @@ All notable changes to DS Bot are listed here. The format follows [Keep a Change
 
 ## [Unreleased]
 
+## [0.5.0]
+
+### Changed
+
+- Display the plugin as Tak Bot Code in the sidebar, settings, and plugin manager.
+
+### Fixed
+
+- Align the group-chat send button with the microphone when composing messages with attachments.
+- Allow the composer crab to be repositioned in group chats without covering the input field.
+
 ## [0.3.1] - 2026-11-07
 
 ### Fixed

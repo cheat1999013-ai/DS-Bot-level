@@ -723,8 +723,10 @@ export class Scheduler {
     return this.write(() => {
       this.plan(planId, true)
       const card = this.card(planId, cardId)
-      if (card.state !== 'running') {
-        throw new SchedulerError('invalid_state', `${cardId} is ${card.state}, expected running`)
+      // Restart recovery can mark a previously acknowledged attempt unknown.
+      const recovered = card.state === 'unknown' && card.receipt !== null && card.terminal_event_id === null
+      if (card.state !== 'running' && !recovered) {
+        throw new SchedulerError('invalid_state', `${cardId} is ${card.state}, expected running or acknowledged unknown`)
       }
       if (member !== card.member) throw new SchedulerError('result_member_mismatch', `${cardId} belongs to ${card.member}`)
       if (receipt !== card.receipt) throw new SchedulerError('result_receipt_mismatch', `${cardId} receipt is ${card.receipt}`)

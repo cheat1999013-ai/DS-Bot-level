@@ -288,7 +288,7 @@ test('failed work retries automatically once then ends dependent cards and alert
     ])
     assert.equal(env.scheduler.cardView(planId, 'a').attempts, 2)
     assert.equal(env.scheduler.cardView(planId, 'a').state, 'running')
-    await env.service.submit({ planId, cardId: 'a', status: 'failed', result: 'second failure' }, env.memberA)
+    await env.service.submit({ planId, cardId: 'a', attempt: 2, status: 'failed', result: 'second failure' }, env.memberA)
     assert.equal(env.scheduler.cardView(planId, 'a').state, 'failed')
     assert.equal(env.scheduler.cardView(planId, 'b').state, 'cancelled')
     assert.match(env.posts.at(-1).text, /@Chief/)
@@ -303,7 +303,7 @@ test('cancelled or failed work cannot be consolidated into the long-term skill p
     await env.service.dispatch({ planId: planned.plan.plan_id }, env.admin)
     await env.service.submit({ planId: planned.plan.plan_id, cardId: 'a', status: 'failed', result: 'cannot complete' }, env.memberA)
     assert.throws(() => env.service.sleepConsolidate({ planId: planned.plan.plan_id,
-      title: 'bad', text: reflection }, env.admin), error => error.code === 'not_all_verified')
+      title: 'bad', text: reflection }, env.admin), error => error.code === 'reflection_deferred')
     assert.equal(env.knowledge.db.prepare('SELECT 1 FROM insights WHERE plan_id=?').get(planned.plan.plan_id), undefined)
   } finally { env.cleanup() }
 })
@@ -318,6 +318,7 @@ test('executor notes and consolidation are gated by identity and completeness', 
     await env.service.dispatch({ planId: planned.plan.plan_id }, env.admin)
     await env.service.submit({ planId: planned.plan.plan_id, cardId: 'a', result: 'done' }, env.memberA)
     await env.service.accept({ planId: planned.plan.plan_id, cardId: 'a' }, env.admin)
+    env.service.finish({ planId: planned.plan.plan_id }, env.admin)
     assert.throws(() => env.service.sleepNote({ planId: planned.plan.plan_id, cardId: 'a', text: reflection }, env.memberB),
       error => error.code === 'not_card_executor')
     env.service.sleepNote({ planId: planned.plan.plan_id, cardId: 'a', text: reflection }, env.memberA)

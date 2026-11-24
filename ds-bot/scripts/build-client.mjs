@@ -37,7 +37,7 @@ export async function bundleClient(pluginRoot = PLUGIN) {
   return [
     '// Generated from src/client by `npm run build` (scripts/build-client.mjs). Do not edit by hand.',
     'window.__ModuleLoader__.load({',
-    '  id: \'ds-bot\',',
+    `  id: ${JSON.stringify(JSON.parse(readFileSync(join(pluginRoot, 'package.json'), 'utf8')).name)},`,
     '  factory: (require) => {',
     'const module = { exports: {} }',
     result.outputFiles[0].text.trimEnd(),

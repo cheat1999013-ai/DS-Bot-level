@@ -56,8 +56,8 @@ ensure_profile() {
 {
   "name": "dsh-profile-web",
   "private": true,
-  "dependencies": { "ds-bot": "link:$PLUGIN" },
-  "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "ds-bot"] } }
+  "dependencies": { "tak-bot-code": "link:$PLUGIN" },
+  "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "tak-bot-code"] } }
 }
 EOF
   printf 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n' > "$profile/pnpm-workspace.yaml"

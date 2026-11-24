@@ -51,7 +51,7 @@ function checkPluginArchive(uid = 1000, gid = 1000) {
       import { accessSync, constants, mkdtempSync, readFileSync, rmSync } from 'node:fs'
       import { fileURLToPath } from 'node:url'
       const profile = JSON.parse(readFileSync('/data/profiles/web/package.json', 'utf8'))
-      const archive = profile.dependencies['ds-bot']
+      const archive = profile.dependencies['tak-bot-code']
       assert.ok(archive.startsWith('file:/'), 'the profile must use a local plugin archive')
       accessSync(fileURLToPath(archive), constants.R_OK)
       const dir = mkdtempSync('/tmp/ds-bot-pack-')
@@ -109,7 +109,7 @@ try {
       import { readFileSync, writeFileSync } from 'node:fs'
       const dir = '/data/profiles/web/'
       const profile = JSON.parse(readFileSync(dir + 'package.json', 'utf8'))
-      const archive = profile.dependencies['ds-bot']
+      const archive = profile.dependencies['tak-bot-code']
       for (const file of ['package.json', 'pnpm-lock.yaml']) {
         const path = dir + file
         writeFileSync(path, readFileSync(path, 'utf8').replaceAll(archive, 'file:/tmp/ds-bot.tgz'))

@@ -23,6 +23,7 @@ test('native tools deliver an assigned card, result card and saved-note card wit
     assert.equal(submitted.taskflowEvent?.to.id, 'bot-admin')
     assert.match(submitted.text, /Verified result with source links/)
     await env.service.accept({ planId: planned.plan.plan_id, cardId: 'write' }, env.admin)
+    env.service.finish({ planId: planned.plan.plan_id }, env.admin)
     const tool = buildToolDefinitions(value => value, env.service).find(tool => tool.name === 'taskflow_sleep_note')
     const result = JSON.parse(await tool.execute({ planId: planned.plan.plan_id, cardId: 'write', text: reflection }, env.memberA))
     assert.equal(result.success, true)
@@ -54,6 +55,7 @@ test('a note notification failure reports delivery separately from the successfu
     await env.service.dispatch({ planId: 'saved' }, env.admin)
     await env.service.submit({ planId: 'saved', cardId: 'write', result: 'Done' }, env.memberA)
     await env.service.accept({ planId: 'saved', cardId: 'write' }, env.admin)
+    env.service.finish({ planId: 'saved' }, env.admin)
     env.service.post = async () => { throw new Error('delivery unavailable') }
     const tool = buildToolDefinitions(value => value, env.service).find(tool => tool.name === 'taskflow_sleep_note')
     const result = JSON.parse(await tool.execute({ planId: 'saved', cardId: 'write', text: reflection }, env.memberA))

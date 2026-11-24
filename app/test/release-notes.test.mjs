@@ -48,7 +48,7 @@ test('the table lists Windows first, then macOS and Linux, and says which files 
   assert.match(rows[3], /^\| Linux, AppImage .*linux-x86_64\.AppImage.*\| 400 MB \|$/u)
   assert.match(rows[4], /^\| Linux, deb .*linux-amd64\.deb.*\| 500 MB \|$/u)
   assert.match(block, /^## Download \/ 下载$/mu)
-  assert.match(block, /The `\.blockmap`, `latest\*\.yml` and `ds-bot-\*\.tgz` files and the source code archives are for updates and the plugin/u)
+  assert.match(block, /The `\.blockmap`, `latest\*\.yml` and `tak-bot-code-\*\.tgz` files and the source code archives are for updates and the plugin/u)
   assert.match(block, /\[SHA256SUMS\.txt\]\(https:\/\/github\.com\/Fei2411\/DS-Bot\/releases\/download\/v0\.2\.3\/SHA256SUMS\.txt\)/u)
   assert.doesNotMatch(block, /Mirror/u)
 })

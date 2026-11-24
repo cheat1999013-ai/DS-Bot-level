@@ -7,6 +7,7 @@ import { teamActions } from './team-actions.js'
 import { themeCss, shellTokens, registry, registerShape, registerTheme, allThemes, layoutOf, widthOf, flatWidthOf } from './themes.js'
 import { MENTION_ORIGIN, currentPart } from './text.js'
 import { SHELL_CSS, CONVERSATION_CSS, installStyles, installCompiledStyles } from './styles.js'
+import { installMascotPosition } from './mascot-position.js'
 import { DASHBOARD_CSS as TASKFLOW_CSS } from './taskflow-dashboard.js'
 import { lookOf } from './mark.js'
 import { TeamSidebar, YouAvatar, AccountLauncher, FooterAccount, BrandMark, BrandName, BotReturn, SIDEBAR_CSS, RETURN_CSS, holdShellShortcuts, openHarnessOnboarding, openHarnessSettings, MODELS_STEP, MODELS_STEP_ORDER, OpenModelsStep } from './sidebar.js'
@@ -60,7 +61,8 @@ import { installTaskProjection, TASK_NODE_KIND } from './task-projection.js'
 import { installTaskInputs as registerTaskInputs } from './task-inputs.js'
 import { QueueDock, QUEUE_CSS } from './queue-dock.js'
 import { noticeApprovals } from './approval-notices.js'
-import { listedOpener } from './open-listed.js'
+import { listedOpener, retainRecentGroupHistory } from './open-listed.js'
+import { projectionWarmup } from './projection-warmup.js'
 
 export const inject = ['sessions', 'uiWorkspace', 'uiConversation', 'slots', 'theme', 'layout']
 
@@ -179,7 +181,11 @@ export function apply(ctx) {
     const unread = unreadStore.update(marks => setUnread(marks, id, value), ui.getSnapshot().unread)
     ui.set(state => (JSON.stringify(state.unread) === JSON.stringify(unread) ? state : { ...state, unread }))
   }
-  const refreshed = new Set()
+  const warmup = projectionWarmup({
+    refresh: id => ctx.sessions.refreshProjections?.(id),
+    onError: quietly('refresh projections'),
+  })
+  ctx.effect(() => retainRecentGroupHistory({ roster, sessions: ctx.sessions, onError: quietly('retain group history') }), 'ds-bot: recent group history')
   // Pulls can overlap (the poll and a navigation); an older answer never wins.
   let pulls = 0
   let applied = 0
@@ -229,11 +235,7 @@ export function apply(ctx) {
     for (const id of pendingAdopt.keys()) {
       if (roster.getSnapshot().agentOf[id] !== undefined || listed[id] === undefined) pendingAdopt.delete(id)
     }
-    for (const id of [...value.bots.map(currentPart), ...value.rooms.map(room => room.sessionId ?? room.id)]) {
-      if (refreshed.has(id)) continue
-      refreshed.add(id)
-      void Promise.resolve(ctx.sessions.refreshProjections?.(id)).catch(quietly('refresh projections'))
-    }
+    warmup.add([...value.bots.map(currentPart), ...value.rooms.map(room => room.sessionId ?? room.id)])
   }
 
   ctx.effect(() => {
@@ -267,7 +269,7 @@ export function apply(ctx) {
     const wake = () => { if (!document.hidden) void loop() }
     document.addEventListener('visibilitychange', wake)
     void loop()
-    return () => { stopped = true; clearTimeout(timer); document.removeEventListener('visibilitychange', wake) }
+    return () => { stopped = true; warmup.stop(); clearTimeout(timer); document.removeEventListener('visibilitychange', wake) }
   }, 'ds-bot: roster poll')
 
   // Plugin updates: every window that opens asks the host once (the host keeps its
@@ -493,6 +495,7 @@ export function apply(ctx) {
       ui.set(state => (state.newChat || state.exchange || state.menu || state.palette ? { ...state, newChat: null, exchange: null, menu: null, palette: null } : state))
       setPlain(false)
       const target = partFor(id)
+      warmup.prioritize(target)
       show(target)
     },
     // The conversation replacements withdraw for a plain Session; set the surface
@@ -1079,6 +1082,7 @@ export function apply(ctx) {
     () => installGroupReplyProjection(ctx),
     () => actions.groupReplyNodes ? shadow('conversation.chat.node', { key: GROUP_REPLY_KIND, priority: BOT_PRIORITY, locale: 'chat', inject: face }, GroupReplyCell) : () => {},
     () => installCompiledStyles(CONVERSATION_CSS, 'conversation'),
+    () => installMascotPosition(),
     () => installCompiledStyles(TURN_ERROR_CSS, 'turn-errors'),
     () => installCompiledStyles(QUEUE_CSS, 'queue'),
     () => installMentions(),

@@ -44,7 +44,7 @@ if (!existsSync(executable)) {
     join('primary-runtime', 'dependencies', 'node', 'bin', windows ? 'node.exe' : 'node'),
     join('office-skills', 'office', 'SKILL.md'),
     join(unpacked, 'node_modules', '@deepseek-ai', 'libreoffice-kit', 'lib', 'cli.js'),
-    join(unpacked, 'node_modules', 'ds-bot', 'office.js'),
+    join(unpacked, 'node_modules', 'tak-bot-code', 'office.js'),
   ]
   const missing = required.filter((entry) => !existsSync(join(resources, entry)))
   // macOS carries the signed "DSH Computer Use" helper outside the asar, in a

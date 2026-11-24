@@ -476,7 +476,20 @@ test('an overview without a saved insight stays empty rather than substituting i
   assert.doesNotMatch(JSON.stringify(note), /Fetch source and write the article/)
 })
 
-test('task summaries and events keep separate Bot tracks and a shared text column', () => {
+test('staircase offsets keep the approved DSH avatar positions and vertical rail geometry', () => {
+  assert.deepEqual([0, 1, 2, 3].map(page.exports.staircaseOffset), [0, 52, 77, 102])
+  const rowStyles = [0, 1, 2].map(lane => page.exports.TaskflowCard({
+    card: { id: `rail-${lane}`, member: 'writer', state: 'pending' }, planId: 'p', lane,
+  }).props.style)
+  assert.deepEqual(rowStyles.map(style => style['--lane-offset']), ['0px', '52px', '77px'])
+  assert.match(page.exports.DASHBOARD_CSS, /margin-left:var\(--lane-offset\)/)
+  assert.match(page.exports.DASHBOARD_CSS, /left:5px;top:6px/)
+  assert.match(page.exports.DASHBOARD_CSS, /left:13px;top:7px/)
+  assert.match(page.exports.DASHBOARD_CSS, /--last-lane-offset/)
+  assert.match(page.exports.DASHBOARD_CSS, /\.bt-taskflow-paths path\{fill:none/)
+})
+
+test('task summaries and timeline keep separate Bot tracks and a shared text column', () => {
   const now = Date.now()
   const data = { generatedAt: now, room, members: {},
     plan: { plan_id: 'plan-a', principal: 'lead', status: 'completed', goal: 'Publish',
@@ -495,8 +508,8 @@ test('task summaries and events keep separate Bot tracks and a shared text colum
   assert.deepEqual(events.map(node => node.props.item.member), ['reviewer', 'writer'])
   assert.deepEqual(cards.map(node => node.type(node.props).children[0].props['data-flow-key']), ['["room-a","writer"]', '["room-a","reviewer"]'])
   assert.ok(events.every(node => nodes(node.type(node.props), item => item.props?.['data-flow-node']).length === 1))
-  assert.match(page.exports.DASHBOARD_CSS, /left:calc\(5px \+ var\(--lane\) \* 16px\)/)
-  assert.match(page.exports.DASHBOARD_CSS, /padding:8px 2px 8px calc\(38px \+ var\(--last-lane\) \* 16px\)/)
+  assert.match(page.exports.DASHBOARD_CSS, /left:13px;top:7px/)
+  assert.match(page.exports.DASHBOARD_CSS, /--last-lane-offset/)
 })
 
 test('draft dispatch shows its distinct lifecycle events on the visible timeline', () => {

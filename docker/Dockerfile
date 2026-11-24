@@ -23,7 +23,7 @@ COPY ds-bot/ /src/ds-bot/
 RUN cd /src/ds-bot \
     && mkdir -p /opt/ds-bot \
     && npm pack --pack-destination /opt/ds-bot \
-    && mv /opt/ds-bot/ds-bot-*.tgz /opt/ds-bot/ds-bot.tgz \
+    && mv /opt/ds-bot/tak-bot-code-*.tgz /opt/ds-bot/ds-bot.tgz \
     && DSH_HOME=/opt/dsh-template dsh plugin --profile web add /opt/ds-bot/ds-bot.tgz
 
 FROM ${NODE_IMAGE}

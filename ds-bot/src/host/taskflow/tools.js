@@ -182,8 +182,8 @@ const TOOLS = [
   {
     name: 'taskflow_submit',
     audience: 'member',
-    description: '执行 Bot 用：提交自己卡的结果。planId/cardId 用派工消息里的值；settled 表示完成，failed 表示失败。只有该卡的执行者能提交。',
-    parameters: { group: GROUP, planId: PLAN, cardId: CARD, result: { type: 'string', required: true }, status: STATUS },
+    description: '执行 Bot 用：提交自己卡的结果。planId、cardId、attempt 使用本次派工消息中的值。旧首次派工未注明 attempt 时可省略。settled 表示完成，failed 表示失败。',
+    parameters: { group: GROUP, planId: PLAN, cardId: CARD, attempt: { type: 'integer' }, result: { type: 'string', required: true }, status: STATUS },
     handler: (service, args, exec) => service.submit(args, exec),
   },
   {
@@ -203,7 +203,7 @@ const TOOLS = [
   {
     name: 'taskflow_sleep_note',
     audience: 'member',
-    description: '执行 Bot 用：为自己已提报的卡写心得。同计划里已有高度重复心得时，收到 note_duplicate 后按本卡的实际判断、证据和核验方法重写，再提交原卡。无实际错误时省略错误段。真实心得可替换自动占位。',
+    description: '执行 Bot 用：整份计划验收收尾后为自己执行的卡写心得。阶段计划还须等所属项目总验收。同计划里已有高度重复心得时，收到 note_duplicate 后按本卡的实际判断、证据和核验方法重写，再提交原卡。无实际错误时省略错误段。真实心得可替换自动占位。',
     parameters: { group: GROUP, planId: PLAN, cardId: CARD, text: REFLECTION_TEXT },
     handler: async (service, args, exec) => {
       const result = service.sleepNote(args, exec)
@@ -213,7 +213,7 @@ const TOOLS = [
   {
     name: 'taskflow_sleep_pending',
     audience: 'leader',
-    description: '主理用：查看哪些已终局卡还没有心得，以及已有心得草稿。全部写完后才能汇总。',
+    description: '主理用：整份计划验收收尾后查看待写心得的卡和已有草稿。阶段计划还须等项目总验收。',
     parameters: { group: GROUP, planId: PLAN },
     handler: (service, args, exec) => service.sleepPending(args, exec),
   },
@@ -417,14 +417,15 @@ export class TaskflowService {
   }
 
   reflectionDeferred(room, plan) {
-    if (plan.reflection_released) return plan.status !== 'completed'
+    if (plan.status !== 'completed') return true
+    if (plan.reflection_released) return false
     const goal = this.reflectionGoal(room, plan)
-    return goal !== null && (goal.status !== 'complete' || plan.status !== 'completed')
+    return goal !== null && goal.status !== 'complete'
   }
 
   requireReflectionReady(room, plan) {
     if (this.reflectionDeferred(room, plan)) {
-      throw new SchedulerError('reflection_deferred', '请等所属项目通过总验收并完成本计划，再写或汇总心得。阶段验收后继续推进项目。')
+      throw new SchedulerError('reflection_deferred', '请等整份计划验收收尾后再收集、撰写或汇总心得。若为项目阶段，还须等项目总验收。')
     }
   }
 
@@ -485,7 +486,7 @@ export class TaskflowService {
     if (Array.isArray(card.dependencies) && card.dependencies.length > 0) {
       lines.push(`前置卡（已验收）: ${card.dependencies.join(', ')}`)
     }
-    lines.push(`完成后调用 taskflow_submit，参数 planId="${state.plan_id}"、cardId="${card.id}"，result 写真实结果；失败则 status="failed"。`)
+    lines.push(`完成后调用 taskflow_submit，参数 planId="${state.plan_id}"、cardId="${card.id}"、attempt=${card.attempts}，result 写真实结果；失败则 status="failed"。`)
     return lines.join('\n')
   }
 
@@ -789,14 +790,18 @@ export class TaskflowService {
     let state = this.planFor(scope, args.planId)
     let card = this.card(scope, state, args.cardId)
     if (card.member !== scope.botId) throw new SchedulerError('not_card_executor', `Card ${card.id} belongs to ${card.member}`)
-    // A group mention can start this turn before dispatch finishes binding.
-    for (let attempt = 0; card.state === 'dispatching' && attempt < 50; attempt++) {
+    const expectedAttempt = args.attempt ?? 1
+    // Wait for the receipt of this assignment only.
+    for (let poll = 0; card.state === 'dispatching' && card.attempts === expectedAttempt && poll < 50; poll++) {
       await new Promise(resolve => setTimeout(resolve, 100))
       state = this.planFor(scope, args.planId)
       card = this.card(scope, state, args.cardId)
     }
-    if (card.state !== 'running' || !card.receipt) {
-      throw new SchedulerError('card_not_running', `Card ${card.id} is ${card.state}; retry once dispatch finishes`)
+    if (card.attempts > 0 && card.attempts !== expectedAttempt) {
+      throw new SchedulerError('result_attempt_mismatch', 'Use the attempt from the assignment that produced this result')
+    }
+    if (!card.receipt || (card.state !== 'running' && card.state !== 'unknown')) {
+      throw new SchedulerError('card_not_running', `Card ${card.id} is ${card.state} without a submittable attempt; the principal must reconcile unacknowledged delivery`)
     }
     const status = args.status === 'failed' ? 'failed' : 'settled'
     const observed = this.scheduler.observeResult(state.plan_id, card.id, {

@@ -128,7 +128,6 @@ export function ActivityIndicator({ sessionId, useRoster, useSessionStatus, useL
   const streaming = entries.some(entry => entry.text)
   const tools = entries.filter(entry => !entry.text).sort((a, b) => a.at - b.at)
   const relaying = tools.some(entry => entry.relay)
-  const groupProgress = room !== undefined && (running || moveAt !== 0)
   const visible = room === undefined && (moveAt !== 0 || rowVisible({ running, streaming, tools, relaying, bot, room }))
   const tool = tools.at(-1)
   const inputRef = useRef(0)
@@ -185,15 +184,8 @@ export function ActivityIndicator({ sessionId, useRoster, useSessionStatus, useL
   useEffect(() => { if (!running) actions.clearLive(sessionId) }, [running, sessionId])
   // Only rows that take the activity row's place grow out of it.
   useRowEntrances(() => leaving.current || Date.now() - endedAt.current < 300)
-  const host = useRunningHost(running || moveAt !== 0)
-  if (!host) return null
-  if (room !== undefined) {
-    return groupProgress ? createPortal(h('div', {
-      className: 'bt-room-progress', role: 'progressbar',
-      'aria-label': t(moveAt !== 0 ? 'Switching working folder' : 'Thinking…'),
-    }, h('span', { 'aria-hidden': true })), host) : null
-  }
-  if (!bot || phase === null || !shown) return null
+  const host = useRunningHost(room === undefined && (running || moveAt !== 0))
+  if (room !== undefined || !host || !bot || phase === null || !shown) return null
   return createPortal(h('div', { className: 'bt-typing', 'data-exiting': phase === 'out' ? '' : undefined, 'aria-hidden': true },
     h(BotMark, { bot, size: 28, state: markState.current, live: true, pokeable: true }),
     h('span', { className: 'bt-typing-text' },

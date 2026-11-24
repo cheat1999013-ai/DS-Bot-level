@@ -369,7 +369,7 @@ const ZH = {
   'HTTP status': 'HTTP 状态码',
   'Request ID': '请求 ID',
   'Provider message': '原文',
-  'DS Bot': 'DS Bot',
+  'Tak Bot Code': 'Tak Bot Code',
 
   // Header
   'Message {name}': '给 {name} 发消息',
@@ -743,7 +743,7 @@ const ZH = {
   'No group chats yet.': '还没有群聊。',
   'A group chat lets several Bots work on one thing with you.': '在群聊里，几个 Bot 和你一起做一件事。',
   'Back to group chats': '返回群聊列表',
-  'DS Bot settings': 'DS Bot 设置',
+  'Tak Bot Code settings': 'Tak Bot Code 设置',
   'Settings pages': '设置页面',
   'Models, providers, and the rest of DeepSeek Harness': '模型、服务商和 DeepSeek Harness 的其他设置',
   'Harness settings': 'Harness 设置',
@@ -776,14 +776,14 @@ const ZH = {
   '{n} d': '{n} 天',
 
   // Plugin updates
-  'DS Bot {version} is available': 'DS Bot {version} 可以更新',
-  'Updating DS Bot…': '正在更新 DS Bot…',
-  'DS Bot {version} is installed. Restart DSH to use it.': 'DS Bot {version} 已安装，重启 DSH 后生效',
-  'DS Bot {version} is installed.': 'DS Bot {version} 已安装。',
-  'DS Bot update': 'DS Bot 更新',
-  'DS Bot {version}': 'DS Bot {version}',
+  'Tak Bot Code {version} is available': 'Tak Bot Code {version} 可以更新',
+  'Updating Tak Bot Code…': '正在更新 Tak Bot Code…',
+  'Tak Bot Code {version} is installed. Restart DSH to use it.': 'Tak Bot Code {version} 已安装，重启 DSH 后生效',
+  'Tak Bot Code {version} is installed.': 'Tak Bot Code {version} 已安装。',
+  'Tak Bot Code update': 'Tak Bot Code 更新',
+  'Tak Bot Code {version}': 'Tak Bot Code {version}',
   'Update installed': '更新已安装',
-  'Restart DSH to start using DS Bot {version}.': '重启 DSH 后开始使用 DS Bot {version}。',
+  'Restart DSH to start using Tak Bot Code {version}.': '重启 DSH 后开始使用 Tak Bot Code {version}。',
   'You have {version}.': '当前版本 {version}。',
   'The update did not finish: {reason}': '更新没有完成：{reason}',
   "What's new": '更新说明',
@@ -793,7 +793,7 @@ const ZH = {
   'DSH update': 'DSH 更新',
   'DSH {version}': 'DSH {version}',
   'Restart DSH to start using DSH {version}.': '重启 DSH 后开始使用 DSH {version}。',
-  'Update DS Bot {version} first.': '先更新 DS Bot {version}。',
+  'Update Tak Bot Code {version} first.': '先更新 Tak Bot Code {version}。',
   'Open updates': '打开更新',
 
   // Command palette
@@ -905,6 +905,7 @@ const ZH = {
   '{first} and {second} are waiting for your approval': '{first}、{second} 等你批准',
   '{first}, {second} and {count} more are waiting for your approval': '{first}、{second} 等 {total} 个等你批准',
   'Waiting for your approval': '等你批准',
+  'Command approval required': '命令待批准',
   'in its own chat': '在自己的对话里',
   'Stop all work in this group': '停止本群的所有工作',
   'Stop all': '全部停止',
@@ -1247,7 +1248,7 @@ const ZH = {
   'Compared with the {count} days before': '与再往前 {count} 天相比',
   '{share}% of all usage from {span}': '占 {span} 全部用量的 {share}%',
   // About
-  'About DS Bot': '关于 DS Bot',
+  'About Tak Bot Code': '关于 Tak Bot Code',
   'Version {version}': '版本 {version}',
   'Star DS Bot on GitHub': '在 GitHub 上给 DS Bot 点 Star',
   '{count} stars': '{count} 个 Star',

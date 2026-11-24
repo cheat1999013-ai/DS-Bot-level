@@ -1,6 +1,6 @@
 // Generated from src/client by `npm run build` (scripts/build-client.mjs). Do not edit by hand.
 window.__ModuleLoader__.load({
-  id: 'ds-bot',
+  id: "tak-bot-code",
   factory: (require) => {
 const module = { exports: {} }
 var __create = Object.create;
@@ -405,7 +405,7 @@ var ZH = {
   "HTTP status": "HTTP 状态码",
   "Request ID": "请求 ID",
   "Provider message": "原文",
-  "DS Bot": "DS Bot",
+  "Tak Bot Code": "Tak Bot Code",
   // Header
   "Message {name}": "给 {name} 发消息",
   Message: "发消息",
@@ -803,7 +803,7 @@ var ZH = {
   "No group chats yet.": "还没有群聊。",
   "A group chat lets several Bots work on one thing with you.": "在群聊里，几个 Bot 和你一起做一件事。",
   "Back to group chats": "返回群聊列表",
-  "DS Bot settings": "DS Bot 设置",
+  "Tak Bot Code settings": "Tak Bot Code 设置",
   "Settings pages": "设置页面",
   "Models, providers, and the rest of DeepSeek Harness": "模型、服务商和 DeepSeek Harness 的其他设置",
   "Harness settings": "Harness 设置",
@@ -834,14 +834,14 @@ var ZH = {
   "{n} h": "{n} 小时",
   "{n} d": "{n} 天",
   // Plugin updates
-  "DS Bot {version} is available": "DS Bot {version} 可以更新",
-  "Updating DS Bot…": "正在更新 DS Bot…",
-  "DS Bot {version} is installed. Restart DSH to use it.": "DS Bot {version} 已安装，重启 DSH 后生效",
-  "DS Bot {version} is installed.": "DS Bot {version} 已安装。",
-  "DS Bot update": "DS Bot 更新",
-  "DS Bot {version}": "DS Bot {version}",
+  "Tak Bot Code {version} is available": "Tak Bot Code {version} 可以更新",
+  "Updating Tak Bot Code…": "正在更新 Tak Bot Code…",
+  "Tak Bot Code {version} is installed. Restart DSH to use it.": "Tak Bot Code {version} 已安装，重启 DSH 后生效",
+  "Tak Bot Code {version} is installed.": "Tak Bot Code {version} 已安装。",
+  "Tak Bot Code update": "Tak Bot Code 更新",
+  "Tak Bot Code {version}": "Tak Bot Code {version}",
   "Update installed": "更新已安装",
-  "Restart DSH to start using DS Bot {version}.": "重启 DSH 后开始使用 DS Bot {version}。",
+  "Restart DSH to start using Tak Bot Code {version}.": "重启 DSH 后开始使用 Tak Bot Code {version}。",
   "You have {version}.": "当前版本 {version}。",
   "The update did not finish: {reason}": "更新没有完成：{reason}",
   "What's new": "更新说明",
@@ -851,7 +851,7 @@ var ZH = {
   "DSH update": "DSH 更新",
   "DSH {version}": "DSH {version}",
   "Restart DSH to start using DSH {version}.": "重启 DSH 后开始使用 DSH {version}。",
-  "Update DS Bot {version} first.": "先更新 DS Bot {version}。",
+  "Update Tak Bot Code {version} first.": "先更新 Tak Bot Code {version}。",
   "Open updates": "打开更新",
   // Command palette
   Messages: "消息",
@@ -959,6 +959,7 @@ var ZH = {
   "{first} and {second} are waiting for your approval": "{first}、{second} 等你批准",
   "{first}, {second} and {count} more are waiting for your approval": "{first}、{second} 等 {total} 个等你批准",
   "Waiting for your approval": "等你批准",
+  "Command approval required": "命令待批准",
   "in its own chat": "在自己的对话里",
   "Stop all work in this group": "停止本群的所有工作",
   "Stop all": "全部停止",
@@ -1294,7 +1295,7 @@ var ZH = {
   "Compared with the {count} days before": "与再往前 {count} 天相比",
   "{share}% of all usage from {span}": "占 {span} 全部用量的 {share}%",
   // About
-  "About DS Bot": "关于 DS Bot",
+  "About Tak Bot Code": "关于 Tak Bot Code",
   "Version {version}": "版本 {version}",
   "Star DS Bot on GitHub": "在 GitHub 上给 DS Bot 点 Star",
   "{count} stars": "{count} 个 Star",
@@ -4214,7 +4215,7 @@ body{--bt-room-progress-gradient:linear-gradient(90deg,#ed81a5,#f3a66d,#edcd72,#
 /* The shell's running status hosts the active conversation indicator. */
 [data-chat-running]{display:block!important;width:100%;min-height:0!important;margin:0!important;padding:0!important}
 [data-chat-running]>span:not([role=status]){display:none!important}
-[data-chat-running]:has(> :is(.bt-typing,.bt-room-progress)){margin-top:var(--dsh-chat-flow-gap,12px)!important}
+[data-chat-running]:has(> .bt-typing){margin-top:var(--dsh-chat-flow-gap,12px)!important}
 .bt-room-progress{display:block;width:100%;height:6px;overflow:hidden;border-radius:999px;background:var(--bt-line-2)}
 .bt-room-progress>span{
   display:block;height:100%;width:32%;border-radius:inherit;
@@ -4271,6 +4272,9 @@ body{--bt-room-progress-gradient:linear-gradient(90deg,#ed81a5,#f3a66d,#edcd72,#
 [data-composer-card]:has(> [data-slot="conversation.input.attachments"] > [class*="_rail"]) [class*="_tools"]{order:2!important}
 [data-composer-card]:has(> [data-slot="conversation.input.attachments"] > [class*="_rail"]) [class*="_trailing"]{margin-left:auto!important}
 [data-composer-card] [data-composer-input]{min-height:24px!important;padding:2px 0!important}
+body[data-bt-room] [data-composer-card]:has(.bt-mic,[data-slot="conversation.input.activity"] > *)>[data-input-scroll]{order:1!important;flex:0 0 100%!important;margin:0 0 6px!important}
+body[data-bt-room] [data-composer-card]:has(.bt-mic,[data-slot="conversation.input.activity"] > *) [class*="_tools"]{order:2!important}
+body[data-bt-room] [data-composer-card]:has(.bt-mic,[data-slot="conversation.input.activity"] > *) [class*="_trailing"]{margin-inline-start:auto!important}
 [data-composer-card] [data-composer-placeholder]{left:0!important;top:2px!important}
 [data-composer-placeholder]{font-size:0!important;line-height:0!important}
 /* The name sits on ::before so that ::after stays free for other composer skins. */
@@ -4290,6 +4294,8 @@ body{--bt-room-progress-gradient:linear-gradient(90deg,#ed81a5,#f3a66d,#edcd72,#
 /* No display here: DSH hides these controls with [hidden] while the Bot works. */
 [data-composer-card] [class*="_standardControls"]{align-items:center!important;gap:8px!important}
 [data-composer-card] button[class*="_primary"]{width:28px!important;height:28px!important;background:var(--bt-accent)!important;color:var(--bt-accent-ink,#fff)!important;border-radius:50%!important;transition:opacity .15s ease,${spring(SPRING_TAP, "scale")};animation:bt-icon-swap ${SPRING_POP.duration}ms ${SPRING_POP.easing}}
+/* The host lifts its 34px primary action. Our 28px group controls share a centerline. */
+body[data-bt-room] [data-composer-card] [class*="_trailing"] button[class*="_primary"]{transform:none}
 [data-composer-card] button[class*="_primary"]:hover:not(:disabled){opacity:.9}
 [data-composer-card] button[class*="_primary"]:active:not(:disabled){scale:.9}
 @keyframes bt-icon-swap{from{opacity:0;transform:scale(.5) rotate(-30deg)}}
@@ -4507,6 +4513,54 @@ function installCompiledStyles(text, tag2) {
   };
 }
 
+// src/client/mascot-position.js
+function installMascotPosition(doc = document) {
+  const positions = /* @__PURE__ */ new Map();
+  let press;
+  const down = (event) => {
+    if (press || event.button !== 0 || !doc.body.hasAttribute("data-bt-room")) return;
+    const hit = event.target.closest?.(".dsh-claude-crab-hit");
+    const mascot = hit?.closest(".dsh-claude-crab");
+    if (!mascot) return;
+    const box = hit.getBoundingClientRect();
+    const stand = mascot.parentElement.getBoundingClientRect();
+    const offset = positions.get(mascot) ?? { x: 0, y: 0, original: mascot.style.translate };
+    press = {
+      mascot,
+      offset,
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      minX: Math.min(0, Math.max(0, stand.left) - box.left),
+      maxX: Math.max(0, Math.min(doc.documentElement.clientWidth, stand.right) - box.right),
+      minY: Math.min(0, -box.top)
+    };
+  };
+  const move = (event) => {
+    if (press?.id !== event.pointerId) return;
+    const dx = event.clientX - press.x;
+    const dy = event.clientY - press.y;
+    if (!press.moved && Math.hypot(dx, dy) < 6) return;
+    press.moved = true;
+    const { mascot, offset } = press;
+    const x = offset.x + Math.max(press.minX, Math.min(press.maxX, dx));
+    const y = Math.min(0, offset.y + Math.max(press.minY, dy));
+    mascot.style.translate = `${x}px ${y}px`;
+    positions.set(mascot, { x, y, original: offset.original });
+  };
+  const end = (event) => {
+    if (press?.id === event.pointerId) press = void 0;
+  };
+  const listeners3 = { pointerdown: down, pointermove: move, pointerup: end, pointercancel: end, lostpointercapture: end };
+  for (const [type, listener] of Object.entries(listeners3)) doc.addEventListener(type, listener, true);
+  return () => {
+    for (const [type, listener] of Object.entries(listeners3)) doc.removeEventListener(type, listener, true);
+    for (const [mascot, position] of positions) mascot.style.translate = position.original;
+    positions.clear();
+    press = void 0;
+  };
+}
+
 // src/client/mark.js
 var import_react2 = require("react");
 var STATES = ["idle", "thinking", "searching", "working", "sending", "orbit", "waiting", "alert", "done"];
@@ -4687,7 +4741,15 @@ function executorIn(data, member, roomId, principal) {
   return Boolean(member && member !== principal && member !== room2?.admin);
 }
 var colors = ["var(--bt-accent)", "var(--bt-green)", "var(--bt-star)", "var(--bt-accent)"];
-var trackStyle = (lane) => ({ "--lane": lane, "--task-color": colors[lane % colors.length] });
+function staircaseOffset(lane) {
+  if (lane <= 0) return 0;
+  return lane === 1 ? 52 : 77 + (lane - 2) * 25;
+}
+var trackStyle = (lane) => ({
+  "--lane": lane,
+  "--lane-offset": `${staircaseOffset(lane)}px`,
+  "--task-color": colors[lane % colors.length]
+});
 var avatar = (bot, id, size) => (0, import_react3.createElement)(BotAvatar, { bot: bot?.id ? bot : { id }, size, badge: false, live: false });
 function Flow({ children }) {
   const ref = (0, import_react3.useRef)(null);
@@ -5138,9 +5200,13 @@ function DashboardView({ data, rooms = data?.rooms ?? [], scope = "all", error =
     member: memberFor(data, executor.roomId, executor.memberId),
     usedSkills: [...executor.usedSkills]
   }));
+  const lastLaneOffset = lanes.size ? staircaseOffset(lanes.size - 1) : 0;
   return (0, import_react3.createElement)(
     "div",
-    { className: "bt-taskflow bt-taskflow-dashboard", style: { "--last-lane": Math.max(0, lanes.size - 1) } },
+    { className: "bt-taskflow bt-taskflow-dashboard", style: {
+      "--last-lane": Math.max(0, lanes.size - 1),
+      "--last-lane-offset": `${lastLaneOffset}px`
+    } },
     (0, import_react3.createElement)(
       "header",
       { className: "bt-taskflow-toolbar" },
@@ -5284,9 +5350,9 @@ var DASHBOARD_CSS = `
 .bt-taskflow-paths{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;z-index:1}
 .bt-taskflow-paths path{fill:none;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
 .bt-taskflow-summaries{position:relative;border:1px solid var(--bt-line-2);border-radius:10px;background:var(--bt-card);overflow:hidden}
-.bt-taskflow-dashboard .bt-taskflow-item{position:relative;z-index:2;padding:8px 2px 8px calc(38px + var(--last-lane) * 16px);border-top:0;border-bottom:1px solid var(--bt-line);min-width:0;outline:none}
+.bt-taskflow-dashboard .bt-taskflow-item{position:relative;z-index:2;margin-left:var(--lane-offset);padding:8px 2px 8px calc(38px + var(--last-lane-offset) - var(--lane-offset));border-top:0;border-bottom:1px solid var(--bt-line);min-width:0;outline:none}
 .bt-taskflow-dashboard .bt-taskflow-item:last-child{border-bottom:0}
-.bt-taskflow-step-node{position:absolute;left:calc(5px + var(--lane) * 16px);top:6px;display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--bt-card)}
+.bt-taskflow-step-node{position:absolute;left:5px;top:6px;display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--bt-card)}
 
 .bt-taskflow-dashboard .bt-taskflow-item:focus-visible{outline:2px solid var(--bt-accent);outline-offset:-2px;border-radius:6px}
 .bt-taskflow-dashboard .bt-taskflow-item .bt-taskflow-id{max-width:min(180px,45%)}
@@ -5300,8 +5366,8 @@ var DASHBOARD_CSS = `
 .bt-taskflow-live{color:var(--bt-ink-2);font-size:11px}
 .bt-taskflow-live::before{content:'';display:inline-block;width:6px;height:6px;margin:0 6px 1px 0;border-radius:50%;corner-shape:round;background:var(--bt-green)}
 .bt-taskflow-events{position:relative;margin:12px 0 0;min-width:0}
-.bt-taskflow-event{position:relative;z-index:2;margin:0 0 12px 0;padding:0 0 0 calc(39px + var(--last-lane) * 16px);min-width:0;outline:none}
-.bt-taskflow-node{position:absolute;left:calc(13px + var(--lane) * 16px);top:7px;width:8px;height:8px;border:1px solid var(--task-color);border-radius:50%;corner-shape:round;background:var(--bt-main)}
+.bt-taskflow-event{position:relative;z-index:2;margin:0 0 12px var(--lane-offset);padding:0 0 0 calc(39px + var(--last-lane-offset) - var(--lane-offset));min-width:0;outline:none}
+.bt-taskflow-node{position:absolute;left:13px;top:7px;width:8px;height:8px;border:1px solid var(--task-color);border-radius:50%;corner-shape:round;background:var(--bt-main)}
 .bt-taskflow-event[data-tone=success] .bt-taskflow-node{border-color:var(--task-color);background:var(--task-color)}
 .bt-taskflow-item[data-state=verified] .bt-taskflow-node{background:var(--task-color)}
 .bt-taskflow-event[data-tone=danger] .bt-taskflow-node{border-color:var(--bt-danger);background:var(--bt-danger)}
@@ -15631,7 +15697,6 @@ function ActivityIndicator({ sessionId, useRoster, useSessionStatus, useLive, us
   const streaming = entries2.some((entry) => entry.text);
   const tools = entries2.filter((entry) => !entry.text).sort((a, b) => a.at - b.at);
   const relaying = tools.some((entry) => entry.relay);
-  const groupProgress = room2 !== void 0 && (running || moveAt !== 0);
   const visible = room2 === void 0 && (moveAt !== 0 || rowVisible({ running, streaming, tools, relaying, bot, room: room2 }));
   const tool = tools.at(-1);
   const inputRef = (0, import_react34.useRef)(0);
@@ -15685,16 +15750,8 @@ function ActivityIndicator({ sessionId, useRoster, useSessionStatus, useLive, us
     if (!running) actions.clearLive(sessionId);
   }, [running, sessionId]);
   useRowEntrances(() => leaving.current || Date.now() - endedAt.current < 300);
-  const host = useRunningHost(running || moveAt !== 0);
-  if (!host) return null;
-  if (room2 !== void 0) {
-    return groupProgress ? (0, import_react_dom4.createPortal)((0, import_react34.createElement)("div", {
-      className: "bt-room-progress",
-      role: "progressbar",
-      "aria-label": t(moveAt !== 0 ? "Switching working folder" : "Thinking…")
-    }, (0, import_react34.createElement)("span", { "aria-hidden": true })), host) : null;
-  }
-  if (!bot || phase === null || !shown) return null;
+  const host = useRunningHost(room2 === void 0 && (running || moveAt !== 0));
+  if (room2 !== void 0 || !host || !bot || phase === null || !shown) return null;
   return (0, import_react_dom4.createPortal)((0, import_react34.createElement)(
     "div",
     { className: "bt-typing", "data-exiting": phase === "out" ? "" : void 0, "aria-hidden": true },
@@ -16609,10 +16666,10 @@ function UpdateButton({ useUpdate, actions }) {
     setDshError("");
     void actions.installDshUpdate().catch((failure) => setDshError(hostText(failure?.message ?? String(failure))));
   };
-  const label = phase === "installing" ? t("Updating DS Bot…") : dshPhase === "installing" ? t("Updating DSH…") : phase === "installed" ? t("DS Bot {version} is installed. Restart DSH to use it.", { version: update.installed ?? update.latest }) : phase === "updated" ? t("DS Bot {version} is installed.", { version: update.installed ?? update.latest }) : dshPhase === "installed" ? t("Restart DSH to start using DSH {version}.", { version: dsh.installed ?? dsh.verified }) : update?.available ? t("DS Bot {version} is available", { version: update.latest }) : t("DSH {version} is available", { version: dsh?.verified });
+  const label = phase === "installing" ? t("Updating Tak Bot Code…") : dshPhase === "installing" ? t("Updating DSH…") : phase === "installed" ? t("Tak Bot Code {version} is installed. Restart DSH to use it.", { version: update.installed ?? update.latest }) : phase === "updated" ? t("Tak Bot Code {version} is installed.", { version: update.installed ?? update.latest }) : dshPhase === "installed" ? t("Restart DSH to start using DSH {version}.", { version: dsh.installed ?? dsh.verified }) : update?.available ? t("Tak Bot Code {version} is available", { version: update.latest }) : t("DSH {version} is available", { version: dsh?.verified });
   const message = error || (phase === "failed" ? update.error : "");
   const dshMessage = dshError || (dshPhase === "failed" ? dsh?.error : "");
-  const dshText = dshPhase === "installed" ? t("Restart DSH to start using DSH {version}.", { version: dsh.installed ?? dsh.verified }) : dsh?.available === false && dsh?.blockedBy ? t("Update DS Bot {version} first.", { version: dsh.blockedBy }) : t("You have {version}.", { version: dsh?.current });
+  const dshText = dshPhase === "installed" ? t("Restart DSH to start using DSH {version}.", { version: dsh.installed ?? dsh.verified }) : dsh?.available === false && dsh?.blockedBy ? t("Update Tak Bot Code {version} first.", { version: dsh.blockedBy }) : t("You have {version}.", { version: dsh?.current });
   return (0, import_react36.createElement)(
     import_react36.Fragment,
     null,
@@ -16629,12 +16686,12 @@ function UpdateButton({ useUpdate, actions }) {
     }, (0, import_react36.createElement)(CloudDownloadIcon, { done: phase === "installed" || phase === "updated" }), phase === "failed" || dshPhase === "failed" ? (0, import_react36.createElement)("span", { className: "bt-update-dot", "aria-hidden": true }) : null),
     shown && box ? (0, import_react_dom5.createPortal)((0, import_react36.createElement)(
       "div",
-      { className: "bt-update-pop", role: "dialog", "aria-label": update?.available || phase !== "idle" ? t("DS Bot update") : t("DSH update"), style: box, "data-leaving": leaving || void 0 },
+      { className: "bt-update-pop", role: "dialog", "aria-label": update?.available || phase !== "idle" ? t("Tak Bot Code update") : t("DSH update"), style: box, "data-leaving": leaving || void 0 },
       update?.available || phase !== "idle" ? (0, import_react36.createElement)(
         import_react36.Fragment,
         null,
-        (0, import_react36.createElement)("div", { className: "bt-update-title" }, phase === "installed" || phase === "updated" ? t("Update installed") : t("DS Bot {version}", { version: update.latest })),
-        (0, import_react36.createElement)("div", { className: "bt-update-text" }, phase === "installed" ? t("Restart DSH to start using DS Bot {version}.", { version: update.installed ?? update.latest }) : phase === "updated" ? t("DS Bot {version} is installed.", { version: update.installed ?? update.latest }) : t("You have {version}.", { version: update.current })),
+        (0, import_react36.createElement)("div", { className: "bt-update-title" }, phase === "installed" || phase === "updated" ? t("Update installed") : t("Tak Bot Code {version}", { version: update.latest })),
+        (0, import_react36.createElement)("div", { className: "bt-update-text" }, phase === "installed" ? t("Restart DSH to start using Tak Bot Code {version}.", { version: update.installed ?? update.latest }) : phase === "updated" ? t("Tak Bot Code {version} is installed.", { version: update.installed ?? update.latest }) : t("You have {version}.", { version: update.current })),
         message ? (0, import_react36.createElement)("div", { className: "bt-update-error", role: "alert" }, t("The update did not finish: {reason}", { reason: message })) : null,
         (0, import_react36.createElement)(
           "div",
@@ -17034,9 +17091,9 @@ function BotReturn({ wide, useSurface, useRoster, actions }) {
   if (mode !== "agent") return null;
   return (0, import_react36.createElement)(
     "button",
-    { type: "button", className: "bt-return", "aria-label": t("DS Bot"), title: t("DS Bot"), onClick: () => actions.setSurface("bot") },
+    { type: "button", className: "bt-return", "aria-label": t("Tak Bot Code"), title: t("Tak Bot Code"), onClick: () => actions.setSurface("bot") },
     (0, import_react36.createElement)(BotMark, { look: MAIN_LOOK, size: 20 }),
-    wide ? (0, import_react36.createElement)("span", { className: "bt-return-name" }, t("DS Bot")) : null
+    wide ? (0, import_react36.createElement)("span", { className: "bt-return-name" }, t("Tak Bot Code")) : null
   );
 }
 var RETURN_CSS = `
@@ -17053,7 +17110,7 @@ function BrandMark({ size = 24 }) {
   return (0, import_react36.createElement)("span", { className: "bt-brand-whale" }, (0, import_react36.createElement)(BotMark, { look: MAIN_LOOK, size }));
 }
 function BrandName() {
-  return (0, import_react36.createElement)("span", { style: { fontWeight: 600, fontSize: 14 } }, "DS Bot");
+  return (0, import_react36.createElement)("span", { style: { fontWeight: 600, fontSize: 14 } }, "Tak Bot Code");
 }
 var SIDEBAR_CSS = `
 .bt-sidebar-section{display:flex;align-items:center;flex-wrap:wrap;gap:4px;padding:10px 8px 3px;min-width:0;color:var(--bt-ink-2);font-size:11px}
@@ -17096,7 +17153,7 @@ var SIDEBAR_CSS = `
 [class*="_footArea"]:has(.bt-foot-account)>[class*="_settingsArea"]{grid-column:3}
 [class*="_footArea"]:has(.bt-foot-account)>[class*="_settingsArea"] button[class*="_trigger"] [class*="_label"]{display:none!important}
 
-/* The update cloud springs in when a newer DS Bot shows up; its arrow drops in a
+/* The update cloud springs in when a newer Tak Bot Code shows up; its arrow drops in a
    loop while the install runs. */
 .bt-round.bt-update{position:relative;color:var(--bt-accent,#4D6BFE);animation:bt-update-in ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing}}
 .bt-round.bt-update svg{width:17px;height:17px}
@@ -24115,11 +24172,11 @@ var import_react55 = require("react");
 var CHEER_MS = 1800;
 var starCount = (count) => new Intl.NumberFormat(dateLocale(), { notation: "compact", maximumFractionDigits: 1 }).format(count);
 function botHint(update) {
-  if (update.phase === "installing") return t("Updating DS Bot…");
-  if (update.phase === "installed") return t("Restart DSH to start using DS Bot {version}.", { version: update.installed ?? update.latest });
-  if (update.phase === "updated") return t("DS Bot {version} is installed.", { version: update.installed ?? update.latest });
+  if (update.phase === "installing") return t("Updating Tak Bot Code…");
+  if (update.phase === "installed") return t("Restart DSH to start using Tak Bot Code {version}.", { version: update.installed ?? update.latest });
+  if (update.phase === "updated") return t("Tak Bot Code {version} is installed.", { version: update.installed ?? update.latest });
   if (update.phase === "failed") return t("The update did not finish: {reason}", { reason: hostText(update.error ?? "") });
-  if (update.available) return t("DS Bot {version} is available", { version: update.latest });
+  if (update.available) return t("Tak Bot Code {version} is available", { version: update.latest });
   if (update.source === "app") return t("Updates come with the DS Bot app.");
   if (update.enabled === false) return t("Update checks are off.");
   if (update.source === "path") return t("Installed from a local folder; update it there.");
@@ -24152,7 +24209,7 @@ function dshHint(dsh, shown) {
   if (dsh.phase === "installing") return t("Updating DSH…");
   if (dsh.phase === "installed") return t("Restart DSH to start using DSH {version}.", { version: dsh.installed ?? dsh.verified });
   if (dsh.phase === "failed") return t("The update did not finish: {reason}", { reason: hostText(dsh.error ?? "") });
-  if (dsh.available === false && dsh.blockedBy) return t("Update DS Bot {version} first.", { version: dsh.blockedBy });
+  if (dsh.available === false && dsh.blockedBy) return t("Update Tak Bot Code {version} first.", { version: dsh.blockedBy });
   if (shown) return t("DSH {version} is available", { version: dsh.verified });
   return t("Version {version}", { version: dsh.current });
 }
@@ -24214,7 +24271,7 @@ function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row4
       (0, import_react55.createElement)(
         "div",
         { className: "bt-about-copy" },
-        (0, import_react55.createElement)("span", { className: "bt-about-name" }, "DS Bot"),
+        (0, import_react55.createElement)("span", { className: "bt-about-name" }, "Tak Bot Code"),
         update.current ? (0, import_react55.createElement)("span", { className: "bt-about-version" }, t("Version {version}", { version: update.current })) : null
       ),
       repo ? (0, import_react55.createElement)(
@@ -24235,7 +24292,7 @@ function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row4
     (0, import_react55.createElement)(
       Section2,
       { key: "updates", title: t("Updates") },
-      (0, import_react55.createElement)(Row4, { label: "DS Bot", hint: ownRow?.hint ?? botHint(update) }, botControl, update.available && update.notesUrl ? (0, import_react55.createElement)("a", linkProps(update.notesUrl), t("What's new")) : null),
+      (0, import_react55.createElement)(Row4, { label: "Tak Bot Code", hint: ownRow?.hint ?? botHint(update) }, botControl, update.available && update.notesUrl ? (0, import_react55.createElement)("a", linkProps(update.notesUrl), t("What's new")) : null),
       dsh?.current ? (0, import_react55.createElement)(Row4, { label: "DeepSeek Harness", hint: dshHint(dsh, dshShown) }, dshControl) : null
     ),
     (0, import_react55.createElement)(
@@ -24641,7 +24698,7 @@ function LocalAgentsPage({ run: run2, Section: Section2, Row: Row4 }) {
 // src/client/settings.js
 var import_react58 = require("react");
 var capitalize2 = (word) => word[0].toUpperCase() + word.slice(1);
-var SETTINGS_PAGES = [["general", "General"], ["models", "Models"], ["local-agents", "Local agents"], ["bots", "Bots"], ["groups", "Group chats"], ["connectors", "Connectors"], ["im", "IM"], ["capabilities", "Capabilities"], ["profiles", "Profiles"], ["browser", "Browser"], ["computer", "Computer use"], ["schedules", "Scheduled tasks"], ["usage", "Usage"], ["secrets", "Secrets"], ["feedback", "Feedback"], ["about", "About DS Bot"]];
+var SETTINGS_PAGES = [["general", "General"], ["models", "Models"], ["local-agents", "Local agents"], ["bots", "Bots"], ["groups", "Group chats"], ["connectors", "Connectors"], ["im", "IM"], ["capabilities", "Capabilities"], ["profiles", "Profiles"], ["browser", "Browser"], ["computer", "Computer use"], ["schedules", "Scheduled tasks"], ["usage", "Usage"], ["secrets", "Secrets"], ["feedback", "Feedback"], ["about", "About Tak Bot Code"]];
 var PAGE_ICONS = { ...SETTINGS_ICONS, models: SlidersIcon, "local-agents": TerminalIcon, connectors: ConnectorIcon, im: ChatsIcon, capabilities: PlugIcon, profiles: PlugIcon, browser: GlobeIcon, computer: MonitorIcon, schedules: ClockIcon, secrets: KeyIcon, feedback: FeedbackIcon, about: InfoIcon };
 function SetSection({ title, className = "", children }) {
   return (0, import_react58.createElement)("section", { className: `bt-set-section ${className}`.trim() }, (0, import_react58.createElement)("h3", null, title), (0, import_react58.createElement)("div", { className: "bt-set-card" }, children));
@@ -25003,7 +25060,7 @@ function SettingsDialog({ page, id, roster, actions, useUpdate, leaving = false 
     (0, import_react58.createElement)("div", { className: "bt-scrim", onMouseDown: close }),
     (0, import_react58.createElement)(
       "div",
-      { className: "bt-settings", role: "dialog", "aria-modal": true, "aria-label": t("DS Bot settings") },
+      { className: "bt-settings", role: "dialog", "aria-modal": true, "aria-label": t("Tak Bot Code settings") },
       (0, import_react58.createElement)(
         "nav",
         { ref: nav.box, className: "bt-settings-nav", "aria-label": t("Settings pages") },
@@ -25223,7 +25280,6 @@ function busyMembers(room2, work, roster) {
   const busy = memberWork(room2, work).filter((entry) => entry.state !== "idle" && roster.byId[entry.id]);
   return [...busy.filter((entry) => entry.state === "ask"), ...busy.filter((entry) => entry.state === "work")].map((entry) => ({ ...entry, bot: roster.byId[entry.id] }));
 }
-var dockMembers = (busy) => busy.filter((entry) => !(entry.state === "work" && entry.here && entry.doing.speaking === true));
 var workState = (doing) => doing?.switching ? "thinking" : toolState(doing?.tool ?? "");
 function botGroupWork(botId, work, roster) {
   return Object.entries(work.rooms ?? {}).flatMap(([roomId, entries2]) => {
@@ -25244,14 +25300,15 @@ function summaryText(busy) {
 function dockModel(sessionId, roster, work) {
   const room2 = roster.roomsById[sessionId];
   if (room2) {
-    const busy = dockMembers(busyMembers(room2, work, roster));
+    const busy = busyMembers(room2, work, roster);
     if (busy.length === 0) return null;
     const { waiting, doing } = summaryText(busy);
     return {
       open: (work.approvals ?? []).some((entry) => entry.roomId === room2.id && room2.members.includes(entry.botId)) ? { session: room2.id } : { details: room2.id },
       faces: busy.slice(0, FACES_MAX2).map((entry) => ({ id: entry.id, ask: entry.state === "ask", state: workState(entry.doing) })),
       waiting,
-      doing
+      doing,
+      running: busy.some((entry) => entry.here)
     };
   }
   const bot = roster.byId[sessionId];
@@ -25295,6 +25352,11 @@ function MemberDock({ sessionId, useRoster, useWork, actions }) {
   return (0, import_react60.createElement)(
     "div",
     { className: "bt-mw-dock", "data-leaving": leaving || void 0 },
+    live?.running ? (0, import_react60.createElement)(
+      "div",
+      { className: "bt-room-progress", role: "progressbar", "aria-label": t("Thinking…") },
+      (0, import_react60.createElement)("span", { "aria-hidden": true })
+    ) : null,
     (0, import_react60.createElement)(
       "button",
       { type: "button", className: "bt-mw-pill", "aria-label": label, onClick: open, disabled: leaving, style: width ? { width } : void 0 },
@@ -25339,7 +25401,7 @@ function ApprovalCard({ approval, bot, actions, showBot = false }) {
   return (0, import_react60.createElement)(
     "div",
     { className: "bt-mw-card", "data-approval-id": approval.id, role: "group", "aria-label": t("{name} is waiting for your approval", { name: bot.name }) },
-    showBot ? (0, import_react60.createElement)("div", { className: "bt-mw-requester" }, (0, import_react60.createElement)(BotMark, { bot, size: 22 }), (0, import_react60.createElement)("strong", null, bot.name), (0, import_react60.createElement)("span", null, t("Waiting for your approval"))) : null,
+    showBot ? (0, import_react60.createElement)("div", { className: "bt-mw-requester" }, (0, import_react60.createElement)(BotMark, { bot, size: 22 }), (0, import_react60.createElement)("strong", null, bot.name), (0, import_react60.createElement)("span", null, t("Command approval required"))) : null,
     (0, import_react60.createElement)("div", { className: "bt-mw-tool" }, approval.tool),
     approval.detail?.text ? (0, import_react60.createElement)("div", { className: "bt-mw-text" }, approval.detail.text) : null,
     approval.reason ? (0, import_react60.createElement)("div", { className: "bt-mw-reason" }, approval.reason) : null,
@@ -25406,7 +25468,7 @@ function useMemberWork(room2, useWork) {
   return { entries: room2 ? memberWork(room2, work) : [] };
 }
 var MEMBER_CSS = `
-.bt-mw-dock{display:flex;justify-content:center;margin:0 auto 8px;pointer-events:none}
+.bt-mw-dock{display:flex;flex-direction:column;align-items:center;gap:6px;width:fit-content;max-width:100%;margin:0 auto 8px;pointer-events:none}
 .bt-mw-pill{pointer-events:auto;position:relative;display:inline-flex;align-items:center;flex:none;box-sizing:border-box;height:32px;max-width:100%;padding:0;border:0;border-radius:999px;overflow:hidden;background:var(--bt-main);box-shadow:0 0 0 .5px var(--bt-line-2),0 2px 8px -2px rgba(0,0,0,.12);color:var(--bt-ink-2);font:inherit;font-size:13px;line-height:18px;cursor:pointer;animation:bt-mw-in ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing} backwards,bt-veil-in .18s ease-out backwards;transition:background-color .12s ease,${spring(SPRING_SHAPE, "width")},${spring(SPRING_TAP, "scale")}}
 .bt-mw-pill:hover{background:color-mix(in srgb,var(--bt-ink) 4%,var(--bt-main))}
 .bt-mw-pill:active{scale:.97}
@@ -28807,6 +28869,98 @@ function listedOpener({ list, open, refresh, current }) {
     refresh?.();
   };
 }
+function retainRecentGroupHistory({ roster, sessions, onError }) {
+  const held = /* @__PURE__ */ new Map();
+  let scheduled = false;
+  let stopped = false;
+  const sync = () => {
+    if (scheduled || stopped) return;
+    scheduled = true;
+    queueMicrotask(() => {
+      if (stopped) return;
+      try {
+        const currentParts = new Set((roster.getSnapshot().rooms ?? []).map((room2) => room2.sessionId ?? room2.id));
+        for (const [id, reference2] of held) {
+          if (currentParts.has(id)) continue;
+          held.delete(id);
+          reference2.release();
+        }
+        const main = Object.values(sessions.list.getSnapshot().byId ?? {}).find((row) => (row.retainedBy?.mainView ?? 0) > 0)?.id;
+        if (!currentParts.has(main)) return;
+        const previous = held.get(main);
+        const reference = previous ?? sessions.retain(main, { source: "dsBotGroupHistory" });
+        held.delete(main);
+        held.set(main, reference);
+        if (!previous) void reference.ready.catch((error) => {
+          if (held.get(main) !== reference) return;
+          held.delete(main);
+          reference.release();
+          onError(error);
+        });
+        if (held.size > 3) {
+          const oldest = held.keys().next().value;
+          const retired = held.get(oldest);
+          held.delete(oldest);
+          retired.release();
+        }
+      } catch (error) {
+        onError(error);
+      } finally {
+        scheduled = false;
+      }
+    });
+  };
+  const offList = sessions.list.subscribe(sync);
+  const offRoster = roster.subscribe(sync);
+  sync();
+  return () => {
+    stopped = true;
+    offList();
+    offRoster();
+    for (const reference of held.values()) reference.release();
+    held.clear();
+  };
+}
+
+// src/client/projection-warmup.js
+var CONCURRENCY = 2;
+function projectionWarmup({ refresh, onError }) {
+  const seen = /* @__PURE__ */ new Set();
+  const pending = /* @__PURE__ */ new Set();
+  let priority;
+  let active = 0;
+  let stopped = false;
+  const drain = () => {
+    while (!stopped && active < CONCURRENCY && pending.size > 0) {
+      const id = pending.has(priority) ? priority : pending.values().next().value;
+      pending.delete(id);
+      active += 1;
+      void Promise.resolve().then(() => refresh(id)).catch(onError).finally(() => {
+        active -= 1;
+        drain();
+      });
+    }
+  };
+  return {
+    add(ids) {
+      if (stopped) return;
+      for (const id of ids) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        pending.add(id);
+      }
+      drain();
+    },
+    prioritize(id) {
+      priority = id;
+    },
+    stop() {
+      stopped = true;
+      pending.clear();
+      seen.clear();
+    }
+  };
+}
 
 // src/client/index.js
 var import_react67 = require("react");
@@ -28902,7 +29056,11 @@ function apply(ctx) {
     const unread = unreadStore.update((marks) => setUnread(marks, id, value), ui2.getSnapshot().unread);
     ui2.set((state) => JSON.stringify(state.unread) === JSON.stringify(unread) ? state : { ...state, unread });
   };
-  const refreshed = /* @__PURE__ */ new Set();
+  const warmup = projectionWarmup({
+    refresh: (id) => ctx.sessions.refreshProjections?.(id),
+    onError: quietly("refresh projections")
+  });
+  ctx.effect(() => retainRecentGroupHistory({ roster, sessions: ctx.sessions, onError: quietly("retain group history") }), "ds-bot: recent group history");
   let pulls = 0;
   let applied = 0;
   const pull = async () => {
@@ -28958,11 +29116,7 @@ function apply(ctx) {
     for (const id of pendingAdopt.keys()) {
       if (roster.getSnapshot().agentOf[id] !== void 0 || listed[id] === void 0) pendingAdopt.delete(id);
     }
-    for (const id of [...value.bots.map(currentPart), ...value.rooms.map((room2) => room2.sessionId ?? room2.id)]) {
-      if (refreshed.has(id)) continue;
-      refreshed.add(id);
-      void Promise.resolve(ctx.sessions.refreshProjections?.(id)).catch(quietly("refresh projections"));
-    }
+    warmup.add([...value.bots.map(currentPart), ...value.rooms.map((room2) => room2.sessionId ?? room2.id)]);
   };
   ctx.effect(() => {
     let stopped = false;
@@ -28997,6 +29151,7 @@ function apply(ctx) {
     void loop();
     return () => {
       stopped = true;
+      warmup.stop();
       clearTimeout(timer);
       document.removeEventListener("visibilitychange", wake);
     };
@@ -29237,6 +29392,7 @@ function apply(ctx) {
       ui2.set((state) => state.newChat || state.exchange || state.menu || state.palette ? { ...state, newChat: null, exchange: null, menu: null, palette: null } : state);
       setPlain(false);
       const target = partFor(id);
+      warmup.prioritize(target);
       show2(target);
     },
     // The conversation replacements withdraw for a plain Session; set the surface
@@ -29791,6 +29947,7 @@ function apply(ctx) {
     () => actions.groupReplyNodes ? shadow("conversation.chat.node", { key: GROUP_REPLY_KIND, priority: BOT_PRIORITY, locale: "chat", inject: face }, GroupReplyCell) : () => {
     },
     () => installCompiledStyles(CONVERSATION_CSS, "conversation"),
+    () => installMascotPosition(),
     () => installCompiledStyles(TURN_ERROR_CSS, "turn-errors"),
     () => installCompiledStyles(QUEUE_CSS, "queue"),
     () => installMentions(),

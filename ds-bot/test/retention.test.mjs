@@ -19,6 +19,7 @@ test('a new scan repairs an insight missing from knowledge after consolidation f
     await env.service.dispatch({ planId: id }, env.admin)
     await env.service.submit({ planId: id, cardId: 'a', result: 'written' }, env.memberA)
     await env.service.accept({ planId: id, cardId: 'a' }, env.admin)
+    env.service.finish({ planId: id }, env.admin)
     env.service.sleepNote({ planId: id, cardId: 'a', text: reflection('keep the method') }, env.memberA)
     const addInsight = env.knowledge.addInsight
     env.knowledge.addInsight = () => { throw new Error('interrupted after coordinator commit') }
@@ -123,9 +124,9 @@ test('trusted acceptance and consolidated insight wait 72h, then archive marks b
     await env.service.dispatch({ planId: id }, env.admin)
     await env.service.submit({ planId: id, cardId: 'a', result: '已复核日志' }, env.memberA)
     await env.service.accept({ planId: id, cardId: 'a' }, env.admin)
+    env.service.finish({ planId: id }, env.admin)
     env.service.sleepNote({ planId: id, cardId: 'a', text: reflection('保留排查办法') }, env.memberA)
     env.service.sleepConsolidate({ planId: id, title: '登录排查心得', text: reflection('复核请求及日志') }, env.admin)
-    env.service.finish({ planId: id }, env.admin)
     const mark = env.scheduler.searchMarks('room-1', '登录排查心得')[0].keyword
     const retention = new Retention(env.scheduler, env.knowledge)
     now += 72 * HOUR - 1

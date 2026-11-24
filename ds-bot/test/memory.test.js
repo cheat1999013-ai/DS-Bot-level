@@ -1779,12 +1779,17 @@ test('a queued review keeps the group lines that leave the log while it waits', 
 test('what is said after a member leaves is still reviewed, for the group', async (t) => {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-memory-'))
   twoMembers(home)
-  const { ctx, call, read, requests, stop } = start({ home, replies: [JSON.stringify({ changes: [{ op: 'add', text: 'The launch moved to Friday' }] })], config: { memoryReviewDelayMs: 200 } })
+  const reviewDelay = 200
+  const { ctx, call, read, requests, stop } = start({ home, replies: [JSON.stringify({ changes: [{ op: 'add', text: 'The launch moved to Friday' }] })], config: { memoryReviewDelayMs: reviewDelay } })
   t.after(() => stop())
   await call('state', {})
+  t.mock.timers.enable({ apis: ['setTimeout'] })
   ctx.emit('agent/status', { agent: { id: 'g2' }, status: 'idle' })
   assert.equal((await call('update-room', { id: 'r1', remove: ['b2'] })).ok, true)
   await postToGroup(ctx, ['The launch moved to Friday'])
+  assert.equal(requests.length, 0)
+  t.mock.timers.tick(reviewDelay)
+  t.mock.timers.reset()
   await reviewed(call)
   assert.equal(requests.length, 1)
   const text = requests[0].messages[0].content[0].text

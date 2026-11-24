@@ -75,7 +75,7 @@ export function createTaskflowRecovery(rt, state, getScheduler) {
         : kind === 'exhausted'
         ? `执行者回合已经结束，自动续执行额度已耗尽，但原任务没有提交结果，整个计划仍未完成。先调用 taskflow_results，planId="${plan.plan_id}"，核实 ${card.id} 的原执行记录和已有产物；依据证据要求原执行者补交，或明确说明阻塞并决定取消。不得伪造结果、放行依赖卡、重复外部操作或把本次通知当作完成。请向用户交代当前状态与下一步，不要只重复告警。`
         : kind === 'unknown'
-        ? `任务尚未完成：重启或派工异常后送达状态不明，依赖卡仍在等待。现在由主理核验已有执行与结果。先调用 taskflow_results，planId="${plan.plan_id}"，再检查原执行记录与已有产物；不得未经核实重派或把普通回复当作完成。核验后按证据明确处置并继续原计划；若缺少必要证据，在群里给出具体缺项与可选择的处置，不要只重复这条告警。`
+        ? `任务尚未完成：重启或派工异常后送达状态不明，依赖卡仍在等待。现在由主理核验已有执行与结果。先调用 taskflow_results，planId="${plan.plan_id}"，再检查原执行记录与已有产物；不得未经核实重派或把普通回复当作完成。核验后立即处置原卡：已有派发回执且原执行者仍在工作或已有产物时，请原执行者用 taskflow_submit 提交原卡；确认原执行已停止且没有可提交结果、重跑不会重复外部操作时，用 taskflow_retry（decision=retry）重派原卡。若证据不足，明确缺哪项证据及下一步核验动作。`
         : `计划尚未完成：有任务卡已满足依赖与审批条件但尚未派出。先调用 taskflow_results，planId="${plan.plan_id}"，核对原计划，再调用 taskflow_dispatch 继续派工；不要新建计划或绕过审批。`
       const scope = { room, botId: room.admin }
       const event = { ...service.taskEvent(scope, plan, card, 'recovery', room.admin),

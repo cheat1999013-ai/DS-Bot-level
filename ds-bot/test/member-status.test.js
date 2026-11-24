@@ -117,6 +117,7 @@ test('pending group approval appears directly in chat and its buttons answer onl
     const nodes = approvalNodes(tree)
     assert.equal(nodes.filter(node => node.props.className === 'bt-mw-card').length, 1)
     assert.equal(nodes.filter(node => node.props['data-approval-id'] === 'here').length, 1)
+    assert.ok(nodes.some(node => node.children?.includes('Command approval required')))
     assert.equal(nodes.filter(node => node.type === 'details' && node.props.className === 'bt-mw-parameters').length, 1)
     assert.ok(nodes.some(node => node.type === 'pre' && node.children[0].includes('second.md')))
     const buttons = nodes.filter(node => node.type === 'button')
@@ -230,8 +231,26 @@ test('one capsule names who waits and keeps approval requests in the group chat'
     rooms: { r1: [{ botId: 'a', since: 1, tool: 'write' }, { botId: 'd', since: 1, speaking: true }], r2: [{ botId: 'b', since: 1, tool: 'edit' }] },
     approvals: [{ botId: 'c', roomId: 'r1' }],
   }
-  assert.deepEqual(plain(dock('r1', work)), { label: 'Prism is waiting for your approval · Anvil · Writing changes…', calls: [['session', 'r1']] })
-  assert.equal(dock('r1', { bots: {}, rooms: { r1: [{ botId: 'd', since: 1, speaking: true }] }, approvals: [] }), null)
+  assert.deepEqual(plain(dock('r1', work)), { label: 'Prism is waiting for your approval · Anvil · Writing changes… +1', calls: [['session', 'r1']] })
+})
+
+test('group work shows a progress bar above its capsule until the last local Bot stops', () => {
+  const render = (entries, approvals = []) => MemberDock({
+    sessionId: 'r1', useRoster: pick => pick(team),
+    useWork: pick => pick({ rooms: { r1: entries, r2: [{ botId: 'b' }] }, approvals }), actions: {},
+  })
+  const first = { botId: 'a', since: 1, speaking: true, tool: 'write' }
+  const second = { botId: 'd', since: 2, speaking: true, tool: 'read' }
+  for (const [entries, name] of [[[first, second], 'Anvil'], [[second], 'Quill']]) {
+    const dock = render(entries)
+    assert.equal(dock.children[0].props.role, 'progressbar')
+    assert.equal(dock.children[0].props['aria-valuenow'], undefined)
+    assert.match(capsuleOf(dock.children[1]).props['aria-label'], new RegExp(name))
+  }
+  assert.equal(render([]), null)
+  const approvalOnly = render([], [{ botId: 'a', roomId: 'r1' }])
+  assert.ok(capsuleOf(approvalOnly))
+  assert.ok(approvalOnly.children.every(child => child?.props.role !== 'progressbar'))
 })
 
 test('a Bot\'s own chat shows the groups it is at work in, unless its own chat runs', () => {

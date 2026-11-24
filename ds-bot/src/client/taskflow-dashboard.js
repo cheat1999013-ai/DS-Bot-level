@@ -28,7 +28,13 @@ function executorIn(data, member, roomId, principal) {
 
 
 const colors = ['var(--bt-accent)', 'var(--bt-green)', 'var(--bt-star)', 'var(--bt-accent)']
-const trackStyle = lane => ({ '--lane': lane, '--task-color': colors[lane % colors.length] })
+export function staircaseOffset(lane) {
+  if (lane <= 0) return 0
+  return lane === 1 ? 52 : 77 + (lane - 2) * 25
+}
+const trackStyle = lane => ({
+  '--lane': lane, '--lane-offset': `${staircaseOffset(lane)}px`, '--task-color': colors[lane % colors.length],
+})
 const avatar = (bot, id, size) => h(BotAvatar, { bot: bot?.id ? bot : { id }, size, badge: false, live: false })
 
 function Flow({ children }) {
@@ -343,7 +349,10 @@ export function DashboardView({ data, rooms = data?.rooms ?? [], scope = 'all', 
   const summaries = [...executors].map(([key, executor]) => h(ExecutorRow, { key, flowKey: key,
     memberId: executor.memberId, lane: lanes.get(key), member: memberFor(data, executor.roomId, executor.memberId),
     usedSkills: [...executor.usedSkills] }))
-  return h('div', { className: 'bt-taskflow bt-taskflow-dashboard', style: { '--last-lane': Math.max(0, lanes.size - 1) } },
+  const lastLaneOffset = lanes.size ? staircaseOffset(lanes.size - 1) : 0
+  return h('div', { className: 'bt-taskflow bt-taskflow-dashboard', style: {
+    '--last-lane': Math.max(0, lanes.size - 1), '--last-lane-offset': `${lastLaneOffset}px`,
+  } },
     h('header', { className: 'bt-taskflow-toolbar' },
       h('h2', null, t('Bot taskflow')),
       h('select', { 'aria-label': t('Filter groups'), value: scope, onChange: event => onScopeChange(event.target.value) },
@@ -455,9 +464,9 @@ export const DASHBOARD_CSS = `
 .bt-taskflow-paths{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;z-index:1}
 .bt-taskflow-paths path{fill:none;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
 .bt-taskflow-summaries{position:relative;border:1px solid var(--bt-line-2);border-radius:10px;background:var(--bt-card);overflow:hidden}
-.bt-taskflow-dashboard .bt-taskflow-item{position:relative;z-index:2;padding:8px 2px 8px calc(38px + var(--last-lane) * 16px);border-top:0;border-bottom:1px solid var(--bt-line);min-width:0;outline:none}
+.bt-taskflow-dashboard .bt-taskflow-item{position:relative;z-index:2;margin-left:var(--lane-offset);padding:8px 2px 8px calc(38px + var(--last-lane-offset) - var(--lane-offset));border-top:0;border-bottom:1px solid var(--bt-line);min-width:0;outline:none}
 .bt-taskflow-dashboard .bt-taskflow-item:last-child{border-bottom:0}
-.bt-taskflow-step-node{position:absolute;left:calc(5px + var(--lane) * 16px);top:6px;display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--bt-card)}
+.bt-taskflow-step-node{position:absolute;left:5px;top:6px;display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--bt-card)}
 
 .bt-taskflow-dashboard .bt-taskflow-item:focus-visible{outline:2px solid var(--bt-accent);outline-offset:-2px;border-radius:6px}
 .bt-taskflow-dashboard .bt-taskflow-item .bt-taskflow-id{max-width:min(180px,45%)}
@@ -471,8 +480,8 @@ export const DASHBOARD_CSS = `
 .bt-taskflow-live{color:var(--bt-ink-2);font-size:11px}
 .bt-taskflow-live::before{content:'';display:inline-block;width:6px;height:6px;margin:0 6px 1px 0;border-radius:50%;corner-shape:round;background:var(--bt-green)}
 .bt-taskflow-events{position:relative;margin:12px 0 0;min-width:0}
-.bt-taskflow-event{position:relative;z-index:2;margin:0 0 12px 0;padding:0 0 0 calc(39px + var(--last-lane) * 16px);min-width:0;outline:none}
-.bt-taskflow-node{position:absolute;left:calc(13px + var(--lane) * 16px);top:7px;width:8px;height:8px;border:1px solid var(--task-color);border-radius:50%;corner-shape:round;background:var(--bt-main)}
+.bt-taskflow-event{position:relative;z-index:2;margin:0 0 12px var(--lane-offset);padding:0 0 0 calc(39px + var(--last-lane-offset) - var(--lane-offset));min-width:0;outline:none}
+.bt-taskflow-node{position:absolute;left:13px;top:7px;width:8px;height:8px;border:1px solid var(--task-color);border-radius:50%;corner-shape:round;background:var(--bt-main)}
 .bt-taskflow-event[data-tone=success] .bt-taskflow-node{border-color:var(--task-color);background:var(--task-color)}
 .bt-taskflow-item[data-state=verified] .bt-taskflow-node{background:var(--task-color)}
 .bt-taskflow-event[data-tone=danger] .bt-taskflow-node{border-color:var(--bt-danger);background:var(--bt-danger)}

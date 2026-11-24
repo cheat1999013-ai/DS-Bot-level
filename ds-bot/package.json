@@ -1,7 +1,7 @@
 {
-  "name": "ds-bot",
-  "version": "0.4.0",
-  "description": "DS Bot: a team of long-lived Bots for DeepSeek Harness, with Main Bots, Bot-to-Bot messages and group chats",
+  "name": "tak-bot-code",
+  "version": "0.5.0",
+  "description": "Tak Bot Code: a team of long-lived Bots for DeepSeek Harness, with Main Bots, Bot-to-Bot messages and group chats",
   "keywords": [
     "dsh-plugin",
     "deepseek-harness",
@@ -28,9 +28,11 @@
     "./taskflow": { "types": "./src/shared/taskflow-types.d.ts", "default": "./src/shared/taskflow-message.js" },
     "./client": "./client.js",
     "./web-search": "./web-search.js",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "files": [
+    "locale",
     "index.js",
     "src/host/",
     "src/shared/",

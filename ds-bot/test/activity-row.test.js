@@ -45,7 +45,7 @@ runInNewContext(outputFiles[0].text, {
 })
 const { ActivityIndicator, findHost, rowVisible, freshInputAt, clientErrors } = module.exports
 
-test('a running group renders only an indeterminate progressbar, then clears it on idle', () => {
+test('a running group leaves the transcript activity slot empty', () => {
   dom.window.document.body.innerHTML = '<div data-chat-flow><div data-chat-running></div></div>'
   const host = findHost()
   const original = react.useState
@@ -59,12 +59,7 @@ test('a running group renders only an indeterminate progressbar, then clears it 
     })
   }
   try {
-    const bar = render(true)
-    assert.equal(bar.props.className, 'bt-room-progress')
-    assert.equal(bar.props.role, 'progressbar')
-    assert.equal(bar.props['aria-valuenow'], undefined)
-    assert.equal(bar.props.children.length, 1)
-    assert.equal(bar.props.children[0].type, 'span')
+    assert.equal(render(true), null)
     assert.equal(render(false), null)
   } finally { react.useState = original }
 })

@@ -49,7 +49,7 @@ description: Use when coordinating a DS Bot group with a dependency plan, task s
 
 ## 执行成员
 
-收到 `@你 [Taskflow 计划ID/卡片ID]` 后执行该卡任务。完成时用 `taskflow_submit` 提交真实结果；失败要写 `status="failed"`。只能提交自己的卡，不能替他人验收或批准。收到心得通知后，用 `taskflow_sleep_note` 写给自己已执行的卡。项目阶段结果提交后继续执行安排，心得等项目总验收。
+收到 `@你 [Taskflow 计划ID/卡片ID]` 后执行该卡任务。完成时用 `taskflow_submit` 提交真实结果；失败要写 `status="failed"`。只能提交自己的卡，不能替他人验收或批准。提交结果后等待验收或返工。仅在整份计划验收收尾后安排、撰写及汇总心得。若本计划是一个项目阶段，还须等待整个项目总验收。收到符合上述条件的心得通知后，用 `taskflow_sleep_note` 提交自己的心得。
 
 ## 心得格式
 

@@ -33,8 +33,7 @@ export function busyMembers(room, work, roster) {
     .map(entry => ({ ...entry, bot: roster.byId[entry.id] }))
 }
 
-// The capsule leaves out the round's current speaker, which its round shows.
-const dockMembers = busy => busy.filter(entry => !(entry.state === 'work' && entry.here && entry.doing.speaking === true))
+
 
 export const workState = doing => (doing?.switching ? 'thinking' : toolState(doing?.tool ?? ''))
 
@@ -64,14 +63,14 @@ export function summaryText(busy) {
 function dockModel(sessionId, roster, work) {
   const room = roster.roomsById[sessionId]
   if (room) {
-    const busy = dockMembers(busyMembers(room, work, roster))
+    const busy = busyMembers(room, work, roster)
     if (busy.length === 0) return null
     const { waiting, doing } = summaryText(busy)
     return {
       open: (work.approvals ?? []).some(entry => entry.roomId === room.id && room.members.includes(entry.botId))
         ? { session: room.id } : { details: room.id },
       faces: busy.slice(0, FACES_MAX).map(entry => ({ id: entry.id, ask: entry.state === 'ask', state: workState(entry.doing) })),
-      waiting, doing,
+      waiting, doing, running: busy.some(entry => entry.here),
     }
   }
   const bot = roster.byId[sessionId]
@@ -116,6 +115,8 @@ export function MemberDock({ sessionId, useRoster, useWork, actions }) {
   const label = [model.waiting, model.doing].filter(Boolean).join(' · ')
   const open = () => (model.open.details ? actions.showDetails(model.open.details) : actions.openSession(model.open.session))
   return h('div', { className: 'bt-mw-dock', 'data-leaving': leaving || undefined },
+    live?.running ? h('div', { className: 'bt-room-progress', role: 'progressbar', 'aria-label': t('Thinking…') },
+      h('span', { 'aria-hidden': true })) : null,
     h('button', { type: 'button', className: 'bt-mw-pill', 'aria-label': label, onClick: open, disabled: leaving, style: width ? { width } : undefined },
       h('span', { ref: inner, className: 'bt-mw-pill-in' },
         h('span', { className: 'bt-mw-faces', 'aria-hidden': true }, faces.map(face => h(Face, { key: face.id, ...face }))),
@@ -144,7 +145,7 @@ function ApprovalCard({ approval, bot, actions, showBot = false }) {
       .finally(() => { submitting.current = false; setBusy(false) })
   }
   return h('div', { className: 'bt-mw-card', 'data-approval-id': approval.id, role: 'group', 'aria-label': t('{name} is waiting for your approval', { name: bot.name }) },
-    showBot ? h('div', { className: 'bt-mw-requester' }, h(BotMark, { bot, size: 22 }), h('strong', null, bot.name), h('span', null, t('Waiting for your approval'))) : null,
+    showBot ? h('div', { className: 'bt-mw-requester' }, h(BotMark, { bot, size: 22 }), h('strong', null, bot.name), h('span', null, t('Command approval required'))) : null,
     h('div', { className: 'bt-mw-tool' }, approval.tool),
     approval.detail?.text ? h('div', { className: 'bt-mw-text' }, approval.detail.text) : null,
     approval.reason ? h('div', { className: 'bt-mw-reason' }, approval.reason) : null,
@@ -216,7 +217,7 @@ export function useMemberWork(room, useWork) {
 }
 
 export const MEMBER_CSS = `
-.bt-mw-dock{display:flex;justify-content:center;margin:0 auto 8px;pointer-events:none}
+.bt-mw-dock{display:flex;flex-direction:column;align-items:center;gap:6px;width:fit-content;max-width:100%;margin:0 auto 8px;pointer-events:none}
 .bt-mw-pill{pointer-events:auto;position:relative;display:inline-flex;align-items:center;flex:none;box-sizing:border-box;height:32px;max-width:100%;padding:0;border:0;border-radius:999px;overflow:hidden;background:var(--bt-main);box-shadow:0 0 0 .5px var(--bt-line-2),0 2px 8px -2px rgba(0,0,0,.12);color:var(--bt-ink-2);font:inherit;font-size:13px;line-height:18px;cursor:pointer;animation:bt-mw-in ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing} backwards,bt-veil-in .18s ease-out backwards;transition:background-color .12s ease,${spring(SPRING_SHAPE, 'width')},${spring(SPRING_TAP, 'scale')}}
 .bt-mw-pill:hover{background:color-mix(in srgb,var(--bt-ink) 4%,var(--bt-main))}
 .bt-mw-pill:active{scale:.97}

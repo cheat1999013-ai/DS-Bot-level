@@ -62,11 +62,53 @@ test('recovered unknown cards raise a retained attention notice without reissuin
   assert.equal(handled.some(item=>item.cardId==='write'&&item.attention===true),true)
   assert.equal(env.posts.length,1)
   assert.match(env.posts[0],/送达状态不明/)
+  assert.match(env.posts[0],/taskflow_submit/)
+  assert.match(env.posts[0],/taskflow_retry（decision=retry）/)
   assert.equal(env.scheduler.cardView('recovered','write').state,'unknown')
   assert.equal(env.scheduler.cardView('recovered','review').attempts,0)
   await env.rt.taskflowSweep()
   assert.equal(env.posts.length,1,'normal repeated sweeps reuse the durable notice marker')
  }finally{env.stop()}
+})
+
+test('the original executor can submit a receipt-backed recovered card without another assignment', async () => {
+ const env = host()
+ try {
+  await env.open()
+  const planId = 'recovered-submission'
+  env.service.plan({ planId, children: [
+   { id: 'write', member: 'Writer', goal: 'Write', dependencies: [] },
+   { id: 'review', member: 'Reviewer', goal: 'Review', dependencies: ['write'] },
+  ] }, env.admin)
+  await env.service.dispatch({ planId }, env.admin)
+  const before = env.scheduler.cardView(planId, 'write')
+  env.scheduler.recoverDispatches()
+  assert.equal(env.scheduler.cardView(planId, 'write').state, 'unknown')
+  await assert.rejects(env.service.submit({ planId, cardId: 'write', result: 'foreign result' }, env.admin), { code: 'not_card_executor' })
+  await env.service.submit({ planId, cardId: 'write', result: 'original work completed' }, env.memberA)
+  const after = env.scheduler.cardView(planId, 'write')
+  assert.equal(after.attempts, before.attempts)
+  assert.equal(after.receipt, before.receipt)
+  assert.equal(env.scheduler.resultPayload(planId, 'write').text, 'original work completed')
+  assert.equal(env.scheduler.cardView(planId, 'review').state, 'pending')
+  assert.equal(env.scheduler.events(planId).filter(event => event.type === 'card_claimed').length, 1)
+  await env.service.accept({ planId, cardId: 'write' }, env.admin)
+  assert.equal(env.scheduler.cardView(planId, 'write').state, 'verified')
+  assert.equal(env.scheduler.cardView(planId, 'review').state, 'running')
+ } finally { env.stop() }
+})
+
+test('an unacknowledged unknown card still requires a principal decision', async () => {
+ const env = host()
+ try {
+  await env.open()
+  const planId = 'unacknowledged-submission'
+  env.service.plan({ planId, children: [{ id: 'write', member: 'Writer', goal: 'Write', dependencies: [] }] }, env.admin)
+  env.scheduler.claimNext(planId, { principal: 'bot-admin' })
+  env.scheduler.markDispatchUnknown(planId, 'write', { reason: 'delivery uncertain' })
+  await assert.rejects(env.service.submit({ planId, cardId: 'write', result: 'unbound result' }, env.memberA), { code: 'card_not_running' })
+  assert.equal(env.scheduler.cardView(planId, 'write').state, 'unknown')
+ } finally { env.stop() }
 })
 
 test('continuation reservations and the exhaustion notice survive a new coordinator instance',async()=>{

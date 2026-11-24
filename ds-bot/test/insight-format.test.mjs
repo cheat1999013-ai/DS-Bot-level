@@ -6,7 +6,7 @@ import { AUTO_NOTE, Scheduler } from '../src/host/taskflow/scheduler.js'
 import { buildToolDefinitions } from '../src/host/taskflow/tools.js'
 
 const body = '## 做了什么\n完成隔离任务并核对输出。\n\n## 为什么这么做\n使用真实隔离数据使结果可复核。\n\n## 里面的错误怎么避免\n本次未发现错误；下次仍先核对输入与验收条件。\n\n## 要在下次任务中做的更好我需要什么\n需要完整的输入样例和验收条件，执行前从任务说明核实。'
-async function ready(goal) {
+async function ready(goal, finish = !goal) {
   const env = fixture()
   try {
     if (goal) env.rt.roomOf('room-1').goal = goal
@@ -15,6 +15,7 @@ async function ready(goal) {
     await env.service.dispatch({ planId: plan.plan_id }, env.admin)
     await env.service.submit({ planId: plan.plan_id, cardId: 'a', result: '实际结果' }, env.memberA)
     await env.service.accept({ planId: plan.plan_id, cardId: 'a' }, env.admin)
+    if (finish) env.service.finish({ planId: plan.plan_id }, env.admin)
     return { ...env, planId: plan.plan_id }
   } catch (error) { env.cleanup(); throw error }
 }
@@ -31,6 +32,41 @@ test('executor and principal can omit the error section when no errors occurred'
   } finally { env.cleanup() }
 })
 
+test('an independent plan defers reflections through submission, rework and acceptance until finish', async () => {
+  const env = fixture()
+  try {
+    const { plan } = env.service.plan({ goal: '交付完整结果', children: [
+      { id: 'a', member: 'Writer', goal: '交付第一部分', dependencies: [] },
+      { id: 'b', member: 'Reviewer', goal: '交付第二部分', dependencies: [] },
+    ] }, env.admin)
+    const planId = plan.plan_id
+    const tool = buildToolDefinitions(value => value, env.service).find(item => item.name === 'taskflow_sleep_note')
+    const note = () => tool.execute({ planId, cardId: 'a', text: noErrorBody }, env.memberA).then(JSON.parse)
+    const deferred = async () => {
+      const posts = env.posts.length
+      assert.equal((await note()).error, 'reflection_deferred')
+      assert.equal(env.service.sleepPending({ planId }, env.admin).deferred, true)
+      assert.throws(() => env.service.sleepConsolidate({ planId, title: '完整结果', text: noErrorBody }, env.admin),
+        error => error.code === 'reflection_deferred')
+      assert.deepEqual(env.scheduler.listNotes(planId), [])
+      assert.equal(env.posts.length, posts)
+    }
+    await env.service.dispatch({ planId }, env.admin)
+    await env.service.submit({ planId, cardId: 'a', result: '初稿' }, env.memberA)
+    await deferred()
+    await env.service.reject({ planId, cardId: 'a', reason: '需要补充证据' }, env.admin)
+    await env.service.submit({ planId, cardId: 'a', attempt: 2, result: '修订结果' }, env.memberA)
+    await env.service.accept({ planId, cardId: 'a' }, env.admin)
+    await deferred()
+    await env.service.submit({ planId, cardId: 'b', result: '第二部分结果' }, env.memberB)
+    await env.service.accept({ planId, cardId: 'b' }, env.admin)
+    await deferred()
+    env.service.finish({ planId }, env.admin)
+    assert.deepEqual(env.service.sleepPending({ planId }, env.admin).pending_cards, ['a', 'b'])
+    assert.equal((await note()).note.text, noErrorBody)
+  } finally { env.cleanup() }
+})
+
 test('duplicate peer reflections are returned for rewriting without saving or replacing the first note', async () => {
   const env = fixture()
   try {
@@ -42,6 +78,9 @@ test('duplicate peer reflections are returned for rewriting without saving or re
     await env.service.dispatch({ planId }, env.admin)
     await env.service.submit({ planId, cardId: 'a', result: '结果甲' }, env.memberA)
     await env.service.submit({ planId, cardId: 'b', result: '结果乙' }, env.memberB)
+    await env.service.accept({ planId, cardId: 'a' }, env.admin)
+    await env.service.accept({ planId, cardId: 'b' }, env.admin)
+    env.service.finish({ planId }, env.admin)
     const tool = buildToolDefinitions(value => value, env.service).find(item => item.name === 'taskflow_sleep_note')
     const first = JSON.parse(await tool.execute({ planId, cardId: 'a', text: noErrorBody }, env.memberA))
     assert.equal(first.note.text, noErrorBody)

@@ -1,7 +1,7 @@
 {
   "name": "dsbot",
   "productName": "DS Bot",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "DS Bot desktop app: the ds-bot team on its own pinned DeepSeek Harness.",
   "author": "Fei2411",
@@ -64,7 +64,7 @@
     "@deepseek-ai/dsh-workflow": "0.2.2-rc.1",
     "@deepseek-ai/libreoffice-kit": "0.1.5",
     "deep-view": "0.1.2",
-    "ds-bot": "file:../ds-bot",
+    "tak-bot-code": "file:../ds-bot",
     "electron-updater": "6.8.10",
     "js-yaml": "4.3.2",
     "pnpm": "11.7.0",

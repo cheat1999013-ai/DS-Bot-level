@@ -1077,7 +1077,7 @@ body{--bt-room-progress-gradient:linear-gradient(90deg,#ed81a5,#f3a66d,#edcd72,#
 /* The shell's running status hosts the active conversation indicator. */
 [data-chat-running]{display:block!important;width:100%;min-height:0!important;margin:0!important;padding:0!important}
 [data-chat-running]>span:not([role=status]){display:none!important}
-[data-chat-running]:has(> :is(.bt-typing,.bt-room-progress)){margin-top:var(--dsh-chat-flow-gap,12px)!important}
+[data-chat-running]:has(> .bt-typing){margin-top:var(--dsh-chat-flow-gap,12px)!important}
 .bt-room-progress{display:block;width:100%;height:6px;overflow:hidden;border-radius:999px;background:var(--bt-line-2)}
 .bt-room-progress>span{
   display:block;height:100%;width:32%;border-radius:inherit;
@@ -1134,6 +1134,9 @@ body{--bt-room-progress-gradient:linear-gradient(90deg,#ed81a5,#f3a66d,#edcd72,#
 [data-composer-card]:has(> [data-slot="conversation.input.attachments"] > [class*="_rail"]) [class*="_tools"]{order:2!important}
 [data-composer-card]:has(> [data-slot="conversation.input.attachments"] > [class*="_rail"]) [class*="_trailing"]{margin-left:auto!important}
 [data-composer-card] [data-composer-input]{min-height:24px!important;padding:2px 0!important}
+body[data-bt-room] [data-composer-card]:has(.bt-mic,[data-slot="conversation.input.activity"] > *)>[data-input-scroll]{order:1!important;flex:0 0 100%!important;margin:0 0 6px!important}
+body[data-bt-room] [data-composer-card]:has(.bt-mic,[data-slot="conversation.input.activity"] > *) [class*="_tools"]{order:2!important}
+body[data-bt-room] [data-composer-card]:has(.bt-mic,[data-slot="conversation.input.activity"] > *) [class*="_trailing"]{margin-inline-start:auto!important}
 [data-composer-card] [data-composer-placeholder]{left:0!important;top:2px!important}
 [data-composer-placeholder]{font-size:0!important;line-height:0!important}
 /* The name sits on ::before so that ::after stays free for other composer skins. */
@@ -1153,6 +1156,8 @@ body{--bt-room-progress-gradient:linear-gradient(90deg,#ed81a5,#f3a66d,#edcd72,#
 /* No display here: DSH hides these controls with [hidden] while the Bot works. */
 [data-composer-card] [class*="_standardControls"]{align-items:center!important;gap:8px!important}
 [data-composer-card] button[class*="_primary"]{width:28px!important;height:28px!important;background:var(--bt-accent)!important;color:var(--bt-accent-ink,#fff)!important;border-radius:50%!important;transition:opacity .15s ease,${spring(SPRING_TAP, 'scale')};animation:bt-icon-swap ${SPRING_POP.duration}ms ${SPRING_POP.easing}}
+/* The host lifts its 34px primary action. Our 28px group controls share a centerline. */
+body[data-bt-room] [data-composer-card] [class*="_trailing"] button[class*="_primary"]{transform:none}
 [data-composer-card] button[class*="_primary"]:hover:not(:disabled){opacity:.9}
 [data-composer-card] button[class*="_primary"]:active:not(:disabled){scale:.9}
 @keyframes bt-icon-swap{from{opacity:0;transform:scale(.5) rotate(-30deg)}}

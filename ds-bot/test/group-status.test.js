@@ -158,6 +158,8 @@ test('a group Session\'s approval waits in the team view, frees the round, and t
   assert.equal(value.work.bots.b.roomId, 'r1')
   assert.equal(value.work.bots.b.tool, 'pwsh')
 
+  assert.equal((await host.call('approval-answer', { id: approval.id, choice: 'constructor' })).error.code, 'bot/invalid')
+  assert.equal((await host.call('state', {})).value.work.approvals[0].id, approval.id)
   assert.equal((await host.call('approval-answer', { id: approval.id, choice: 'allow' })).ok, true)
   assert.equal(await outcome, 'allowed-once')
   assert.equal((await host.call('approval-answer', { id: approval.id, choice: 'allow' })).error.code, 'bot/stale')

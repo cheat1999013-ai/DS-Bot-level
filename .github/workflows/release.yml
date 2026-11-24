@@ -106,7 +106,7 @@ jobs:
           TAG: ${{ github.event.release.tag_name }}
         run: |
           npm pack
-          gh release upload "$TAG" "ds-bot-$(node -p "require('./package.json').version").tgz" --clobber
+          gh release upload "$TAG" "tak-bot-code-$(node -p "require('./package.json').version").tgz" --clobber
 
   app-windows:
     name: Desktop app installer (Windows)

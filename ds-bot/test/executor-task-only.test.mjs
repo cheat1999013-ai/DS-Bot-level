@@ -44,6 +44,8 @@ test('formal assignment and submission persist a real result and address the lea
  assert.equal(resultPost.message.source.taskflowEvent.from.id,'b')
  assert.equal(resultPost.message.source.taskflowEvent.to.id,'a')
  assert.deepEqual(resultPost.message.source.mentions.ids,['a'])
+ assert.equal((await tool('taskflow_accept',{planId,cardId:'deliver'},'ga')).success,true)
+ assert.equal((await tool('taskflow_finish',{planId},'ga')).finished?.status,'completed')
  const note=await tool('taskflow_sleep_note',{planId,cardId:'deliver',text:'## 做了什么\n提交了隔离测试结果。\n## 为什么这么做\n验证结果与任务身份一同送达。\n## 里面的错误怎么避免\n不以普通聊天冒充提交。\n## 要在下次任务中做的更好我需要什么\n保留可回放的提交证据。'},'gb')
  assert.equal(note.notification?.sent,true,JSON.stringify(note))
  const reflection=posted.find(value=>value.message.source.taskflowEvent?.event==='reflection')

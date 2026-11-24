@@ -35,7 +35,7 @@ export function createTaskflowContinuation(rt, state, getScheduler) {
       if (botId !== room.admin) {
         const card = plan.cards.find(card => card.member === botId && card.state === 'running' && !hasResult(card))
         if (card) return obligation(plan, card, 'submit',
-          `继续当前任务，不要把已用过工具或回合结束当成完成。已有结果时调用 taskflow_submit，planId="${plan.plan_id}"、cardId="${card.id}"；遇到阻塞如实提交失败，不要重复已完成的外部操作。`)
+          `继续当前任务，不要把已用过工具或回合结束当成完成。已有结果时调用 taskflow_submit，planId="${plan.plan_id}"、cardId="${card.id}"，attempt 使用产生该结果的派工消息中的值；遇到阻塞如实提交失败，不要重复已完成的外部操作。`)
         continue
       }
       if (plan.principal !== botId) continue

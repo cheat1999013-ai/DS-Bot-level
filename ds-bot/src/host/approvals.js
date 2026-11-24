@@ -100,7 +100,7 @@ export function install(rt) {
   function answerApproval(id, choice) {
     const entry = pending.get(String(id ?? ''))
     if (entry?.answer === undefined) throw Object.assign(new Error('This approval is no longer open'), { code: 'bot/stale' })
-    const outcome = OUTCOMES[choice]
+    const outcome = typeof choice === 'string' && Object.hasOwn(OUTCOMES, choice) ? OUTCOMES[choice] : undefined
     if (outcome === undefined) throw Object.assign(new Error('Choose allow or reject'), { code: 'bot/invalid' })
     entry.answer(outcome)
   }
